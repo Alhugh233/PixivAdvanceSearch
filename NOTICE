@@ -1,0 +1,9 @@
+PixivAdvanceSearch
+Copyright (C) 2026 Alhugh233
+
+This project is licensed under the Apache License 2.0.
+See the LICENSE file for the full license text.
+
+Third-party dependencies:
+- libxposed (api, service) — Apache 2.0 (LSPosed)
+- DexKit — Apache 2.0 (dual-licensed under LGPL 3.0 / Apache 2.0)

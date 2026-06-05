@@ -1,0 +1,23 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/
+!gradle/libs.versions.toml
+
+# IDE
+.idea/
+*.iml
+.acside/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# Local config
+local.properties
