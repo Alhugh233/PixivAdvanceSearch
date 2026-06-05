@@ -37,6 +37,10 @@ Requires `compileSdk 36`.
 2. Enable in LSPosed → scope `jp.pxv.android` (or use static scope)
 3. Force-stop Pixiv
 
+### Supported versions
+
+Developed and tested on Pixiv **6.183.0**. DexKit-based discovery enables cross-version compatibility as long as the target method structure remains similar.
+
 ### License
 
 [Apache-2.0](LICENSE)
