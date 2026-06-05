@@ -39,7 +39,9 @@ Requires `compileSdk 36`.
 
 ### Supported versions
 
-Developed and tested on Pixiv **6.183.0**. DexKit-based discovery enables cross-version compatibility as long as the target method structure remains similar.
+- Pixiv: developed and tested on **6.183.0** (DexKit-based discovery enables cross-version compatibility)
+- LSPosed API: **101** (minSdk 27)
+- Architecture: arm64-v8a (libdexkit.so)
 
 ### License
 
