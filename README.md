@@ -40,8 +40,7 @@ Requires `compileSdk 36`.
 ### Supported versions
 
 - Pixiv: developed and tested on **6.183.0** (DexKit-based discovery enables cross-version compatibility)
-- LSPosed API: **101** (minSdk 27)
-- Architecture: arm64-v8a (libdexkit.so)
+- LSPosed API: **101**
 
 ### License
 

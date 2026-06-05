@@ -40,8 +40,7 @@
 ### 支持版本
 
 - Pixiv: 基于 **6.183.0** 开发与测试（DexKit 字节码搜索支持跨版本兼容）
-- LSPosed API: **101**（最低 SDK 27）
-- 架构: arm64-v8a（libdexkit.so）
+- LSPosed API: **101**
 
 ### 许可证
 
