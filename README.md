@@ -1,47 +1,51 @@
 # PixivAdvanceSearch
 
-[中文](README_zh.md)
+适用于 [Pixiv](https://play.google.com/store/apps/details?id=jp.pxv.android) (jp.pxv.android) 的 LSPosed 模块。
 
-LSPosed module for [Pixiv](https://play.google.com/store/apps/details?id=jp.pxv.android) (jp.pxv.android).
+> **注意**：本模块基于 Vibe Coding 开发，代码质量参差不齐，请谨慎使用。
 
-### Features
+### 功能
 
-- **Unlimited popular-sort search trial** — the 7-day trial for sorting search results by popularity never expires. Works by hooking the trial-days counter and AB-test gate, not by faking premium (server-side data is unaffected).
+- **热门排序无限试用** — 热门度排序搜索的 7 天试用永不过期。通过 Hook 试用天数计数器和 AB 实验开关实现，不是伪装高级会员（服务端数据不受影响）。
 
-- **PID lookup** — a "PID" button injected into the main toolbar. Enter an illust/novel/user ID to jump directly to the corresponding detail page.
+- **PID 查询** — 主界面 Toolbar 注入「PID」按钮，输入 ID 直接跳转到对应插画/小说/用户页面。
 
-- **Work detail viewer** — long-press any work thumbnail to see an extra "View Details" option in the context menu. Displays work title, author name, work PID, and user PID in a selectable dialog.
+- **作品详情查看** — 长按作品 → 菜单新增「查看详情」。弹窗显示作品名称、作者名称、作品 PID、用户 PID，支持长按复制。
 
-### How it works
+### 截图
 
-| Feature | Hook target | Discovery method |
+![第一张](images/first.jpg) ![第二张](images/second.jpg)
+
+### 工作原理
+
+| 功能 | Hook 目标 | 搜索方式 |
 |---|---|---|
-| Trial days | `um9.w()` | DexKit: `core_local_preference_key_first_launch_time_millis` + `86400000L` |
-| AB test | `i23.a()` | DexKit: string `"] cannot be converted to a boolean."` |
-| PID button | `MainActivity` toolbar | View-tree walk for Toolbar class |
-| Work detail | `te.create()` | DexKit: `"layout_inflater"` → `pe` → `addInvoke` → `te` → 0-arg non-void methods |
+| 试用天数 | `um9.w()` | DexKit: `core_local_preference_key_first_launch_time_millis` + `86400000L` |
+| AB 实验 | `i23.a()` | DexKit: 字符串 `"] cannot be converted to a boolean."` |
+| PID 按钮 | `MainActivity` Toolbar | View 树遍历查找 Toolbar |
+| 查看详情 | `te.create()` | DexKit: `"layout_inflater"` → `pe` → `addInvoke` → `te` → 0 参非 void 方法 |
 
-All hooks use DexKit bytecode search at runtime with fallback to direct class names.
+所有 Hook 优先使用 DexKit 字节码搜索定位目标方法，失败后回退直接类名。
 
-### Build
+### 构建
 
 ```bash
 ./gradlew assembleDebug
 ```
 
-Requires `compileSdk 36`.
+需要 `compileSdk 36`。
 
-### Install
+### 安装
 
-1. Install the APK
-2. Enable in LSPosed → scope `jp.pxv.android` (or use static scope)
-3. Force-stop Pixiv
+1. 安装 APK
+2. 在 LSPosed 中启用模块，作用域选择 `jp.pxv.android`（或使用静态作用域）
+3. 强制停止 Pixiv
 
-### Supported versions
+### 支持版本
 
-- Pixiv: developed and tested on **6.183.0** (DexKit-based discovery enables cross-version compatibility)
+- Pixiv: 基于 **6.183.0** 开发与测试（DexKit 字节码搜索支持跨版本兼容）
 - LSPosed API: **101**
 
-### License
+### 许可证
 
 [Apache-2.0](LICENSE)
