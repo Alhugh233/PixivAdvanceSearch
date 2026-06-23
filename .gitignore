@@ -21,3 +21,6 @@ Thumbs.db
 
 # Local config
 local.properties
+
+# Keystore
+jks/

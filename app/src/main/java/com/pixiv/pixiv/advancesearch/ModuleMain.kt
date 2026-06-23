@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -60,6 +61,9 @@ class ModuleMain : XposedModule() {
 
         // PID search doesn't need DexKit, install it first
         installPidSearch(cl)
+
+        // Display settings — inject item into SettingActivity
+        installDisplaySetting(cl)
 
         val bridge = try { DexKitBridge.create(apk) } catch (e: Throwable) {
             Log.e(TAG, "DexKit create failed: ${e.message}", e); null
@@ -375,6 +379,62 @@ class ModuleMain : XposedModule() {
 
     private fun callO(obj: Any, method: String): Any? {
         return try { obj.javaClass.getMethod(method).invoke(obj) } catch (_: Exception) { null }
+    }
+
+    // ================================================================
+    // Display Setting — inject item into SettingActivity list
+    // ================================================================
+
+    private fun installDisplaySetting(classLoader: ClassLoader) {
+        try {
+            val settingClass = classLoader.loadClass(
+                "jp.pxv.android.feature.setting.list.SettingActivity")
+            val onCreate = settingClass.getDeclaredMethod("onCreate", android.os.Bundle::class.java)
+
+            hook(onCreate).setPriority(PRIORITY_LOWEST).intercept { chain ->
+                chain.proceed()
+                val activity = chain.thisObject as Activity
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    injectDisplayItem(activity)
+                }
+            }
+            Log.i(TAG, "Display: SettingActivity.onCreate()")
+        } catch (e: Exception) {
+            Log.e(TAG, "Display hook FAILED: ${e.message}", e)
+        }
+    }
+
+    private val displayInjected = hashSetOf<Int>()
+
+    private fun injectDisplayItem(activity: Activity) {
+        if (!displayInjected.add(System.identityHashCode(activity))) return
+        try {
+            val toolbar = findToolbar(activity.window.decorView)
+            val btn = TextView(activity).apply {
+                text = "显示设置"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                setTextColor(Color.parseColor("#C62828"))
+                gravity = Gravity.CENTER
+                setPadding(dp(activity, 12), 0, dp(activity, 12), 0)
+                setOnClickListener {
+                    activity.startActivity(Intent(Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://www.pixiv.net/settings/viewing")))
+                }
+            }
+            if (toolbar != null) {
+                toolbar.addView(btn, android.widget.Toolbar.LayoutParams(
+                    WRAP, MATCH, Gravity.END or Gravity.CENTER_VERTICAL))
+            } else {
+                // Fallback: add to DecorView below status bar
+                val params = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.END)
+                params.topMargin = dp(activity, 48)
+                params.rightMargin = dp(activity, 8)
+                (activity.window.decorView as FrameLayout).addView(btn, params)
+            }
+            Log.i(TAG, "Display button injected into Settings")
+        } catch (e: Exception) {
+            Log.e(TAG, "injectDisplayItem: ${e.message}", e)
+        }
     }
 
     // ================================================================
