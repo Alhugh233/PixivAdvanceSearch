@@ -180,9 +180,9 @@ class ModuleMain : XposedModule() {
     // ================================================================
     // Work Detail — fully DexKit-based discovery + hook
     //
-    // Chain: layout_inflater → pe class → pe.p / pe.r → te.create()
-    // Hook te.create() BEFORE proceed: append "查看详情" to pe.p,
-    // wrap pe.r to handle the new item → show work info dialog.
+    // Chain: layout_inflater → builder params (pe/he) → items (p) / item listener (r)
+    // → builder.create() (te/le). Hook create() BEFORE proceed: append "查看详情",
+    // wrap the item listener, then show the work info dialog.
     // ================================================================
 
     private fun installWorkDetailHook(bridge: DexKitBridge, classLoader: ClassLoader) {
@@ -226,34 +226,39 @@ class ModuleMain : XposedModule() {
             if (teClass == null) { Log.e(TAG, "WD: te class not found"); return false }
             Log.i(TAG, "WD: te=${teClass.name}")
 
-            // Step 4+5: Hook all 0-param non-void te methods.
+            // Step 4+5: Hook create() before it reads the builder's items/listener.
             val peField = teClass.declaredFields.find { it.type == peClass }
             if (peField == null) { Log.e(TAG, "WD: pe field not found in te"); return false }
             peField.isAccessible = true
             val safeItems = itemsField!!
             val safeListener = listenerField!!
             for (createMethod in teClass.declaredMethods) {
-                if (createMethod.parameterTypes.isNotEmpty() || createMethod.returnType == Void.TYPE) continue
+                // Only hook create(); b() delegates to it and would otherwise inject twice.
+                if (createMethod.name != "create" || createMethod.parameterTypes.isNotEmpty() ||
+                    createMethod.returnType == Void.TYPE) continue
                 hook(createMethod).intercept { chain ->
                     val teObj = chain.thisObject
                     val peObj = peField.get(teObj)
                     @Suppress("UNCHECKED_CAST")
                     val items = safeItems.get(peObj) as? Array<CharSequence>
 
-                    if (items != null) {
+                    if (items != null && items.none { it?.toString() == "查看详情" }) {
                         val origListener = safeListener.get(peObj) as? DialogInterface.OnClickListener
                         val workData = if (origListener != null) extractWorkFromListener(origListener) else null
 
-                        val newItems = items + "查看详情"
-                        safeItems.set(peObj, newItems)
+                        // Do not touch unrelated list dialogs (profile edit, settings, ...).
+                        if (origListener != null && workData != null && isWorkItem(workData)) {
+                            val newItems = items + "查看详情"
+                            safeItems.set(peObj, newItems)
 
-                        val detailIdx = newItems.size - 1
-                        safeListener.set(peObj, DialogInterface.OnClickListener { dlg, which ->
-                            if (which == detailIdx && workData != null)
-                                showWorkDetailDialog(dlg, workData)
-                            else if (origListener != null)
-                                origListener.onClick(dlg, which)
-                        })
+                            val detailIdx = newItems.size - 1
+                            safeListener.set(peObj, DialogInterface.OnClickListener { dlg, which ->
+                                if (which == detailIdx)
+                                    showWorkDetailDialog(dlg, workData)
+                                else
+                                    origListener.onClick(dlg, which)
+                            })
+                        }
                     }
                     chain.proceed()
                 }
@@ -325,10 +330,12 @@ class ModuleMain : XposedModule() {
     }
 
     private fun extractWorkFromListener(listener: DialogInterface.OnClickListener): Any? {
-        // c0 has: a(int) b(Object/io8) c(Object/ho8) d(Serializable/rz6)
-        // The work item is in field 'd' (the only Serializable-typed field)
+        // 6.204.0 listener z: a(byte) b(Object/w89) c(Object/v89) d(Serializable/ng7)
+        // The work item is the only Serializable-typed field.
         for (f in listener.javaClass.declaredFields) {
-            if (Serializable::class.java.isAssignableFrom(f.type)) {
+            // Skip String payloads used by unrelated dialogs; the work model is a
+            // Serializable entity (ng7 in 6.204.0).
+            if (Serializable::class.java.isAssignableFrom(f.type) && f.type != String::class.java) {
                 f.isAccessible = true
                 return f.get(listener)
             }
@@ -338,21 +345,14 @@ class ModuleMain : XposedModule() {
 
     private fun showWorkDetailDialog(dialog: DialogInterface, work: Any) {
         try {
-            val clz = work.javaClass
-            val workPid = callS(work, "getId")
-            val title = callS(work, "getTitle")
-            val user = callO(work, "getUser")
-            val userName = if (user != null) {
-                try {
-                    user.javaClass.getDeclaredField("name").apply { isAccessible = true }.get(user)?.toString() ?: "—"
-                } catch (_: Exception) { "—" }
-            } else "—"
-            val userPid = if (user != null) {
-                try {
-                    user.javaClass.declaredFields.find { it.type == java.lang.Long.TYPE }
-                        ?.apply { isAccessible = true }?.get(user)?.toString() ?: "—"
-                } catch (_: Exception) { "—" }
-            } else "—"
+            val workPid = callS(work, "getId") ?: firstLong(work) ?: "—"
+            val title = callS(work, "getTitle") ?: firstString(work) ?: "—"
+            val user = findUser(work)
+            val userName = if (user != null) findUserName(user) else "—"
+            val userPid = if (user != null) findUserId(user) else "—"
+
+            Log.i(TAG, "WD: work=${work.javaClass.name} user=${user?.javaClass?.name} " +
+                    "title=$title name=$userName workPid=$workPid userPid=$userPid")
 
             val ctx = (dialog as? android.app.Dialog)?.context ?: return
 
@@ -372,13 +372,92 @@ class ModuleMain : XposedModule() {
         } catch (e: Exception) { Log.e(TAG, "showDetail: ${e.message}", e) }
     }
 
-    private fun callS(obj: Any, method: String): String {
-        return try { obj.javaClass.getMethod(method).invoke(obj)?.toString() ?: "—" }
-        catch (_: Exception) { "—" }
+    /** Work models expose the user as getUser() (older) or f0() (6.204.0). */
+    private fun findUser(work: Any): Any? {
+        for (name in arrayOf("getUser", "f0")) {
+            try {
+                val value = work.javaClass.getMethod(name).invoke(work)
+                if (value != null) return value
+            } catch (_: Exception) { }
+        }
+        return null
     }
 
-    private fun callO(obj: Any, method: String): Any? {
-        return try { obj.javaClass.getMethod(method).invoke(obj) } catch (_: Exception) { null }
+    /** 6.204.0: PixivUser(id=a, name=b, account=c, comment=d). */
+    private fun findUserName(user: Any): String {
+        for (name in arrayOf("name", "userName")) {
+            try {
+                val f = user.javaClass.getDeclaredField(name)
+                f.isAccessible = true
+                val value = f.get(user)?.toString()
+                if (!value.isNullOrBlank()) return value
+            } catch (_: Exception) { }
+        }
+        for (method in arrayOf("getName", "getUserName")) {
+            try {
+                val value = user.javaClass.getMethod(method).invoke(user)?.toString()
+                if (!value.isNullOrBlank()) return value
+            } catch (_: Exception) { }
+        }
+        // Fallback: the first non-empty String field is the display name.
+        return firstString(user) ?: "—"
+    }
+
+    /** 6.204.0: PixivUser.a is the numeric user id. */
+    private fun findUserId(user: Any): String {
+        for (name in arrayOf("id", "userId")) {
+            try {
+                val f = user.javaClass.getDeclaredField(name)
+                f.isAccessible = true
+                val value = f.get(user)?.toString()
+                if (!value.isNullOrBlank()) return value
+            } catch (_: Exception) { }
+        }
+        for (method in arrayOf("getId", "getUserId")) {
+            try {
+                val value = user.javaClass.getMethod(method).invoke(user)?.toString()
+                if (!value.isNullOrBlank()) return value
+            } catch (_: Exception) { }
+        }
+        return firstLong(user) ?: "—"
+    }
+
+    private fun isWorkItem(obj: Any): Boolean {
+        return try {
+            obj.javaClass.getMethod("getId")
+            obj.javaClass.getMethod("getTitle")
+            findUser(obj) != null
+        } catch (_: Exception) { false }
+    }
+
+    private fun firstLong(obj: Any): String? {
+        for (f in obj.javaClass.declaredFields) {
+            if (f.type == java.lang.Long.TYPE) {
+                try {
+                    f.isAccessible = true
+                    return f.get(obj)?.toString()
+                } catch (_: Exception) { }
+            }
+        }
+        return null
+    }
+
+    private fun firstString(obj: Any): String? {
+        for (f in obj.javaClass.declaredFields) {
+            if (f.type == String::class.java) {
+                try {
+                    f.isAccessible = true
+                    val value = f.get(obj) as? String
+                    if (!value.isNullOrBlank()) return value
+                } catch (_: Exception) { }
+            }
+        }
+        return null
+    }
+
+    private fun callS(obj: Any, method: String): String? {
+        return try { obj.javaClass.getMethod(method).invoke(obj)?.toString() }
+        catch (_: Exception) { null }
     }
 
     // ================================================================

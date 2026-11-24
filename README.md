@@ -23,7 +23,7 @@
 | 试用天数 | `um9.w()` | DexKit: `core_local_preference_key_first_launch_time_millis` + `86400000L` |
 | AB 实验 | `i23.a()` | DexKit: 字符串 `"] cannot be converted to a boolean."` |
 | PID 按钮 | `MainActivity` Toolbar | View 树遍历查找 Toolbar |
-| 查看详情 | `te.create()` | DexKit: `"layout_inflater"` → `pe` → `addInvoke` → `te` → 0 参非 void 方法 |
+| 查看详情 | 对话框 builder 的 `create()` | DexKit: `"layout_inflater"` → builder 参数类 → `addInvoke` → builder → `create()` |
 
 所有 Hook 优先使用 DexKit 字节码搜索定位目标方法，失败后回退直接类名。
 
@@ -43,7 +43,7 @@
 
 ### 支持版本
 
-- Pixiv: 基于 **6.183.0** 开发与测试（理论全版本通杀）
+- Pixiv: 基于 **6.204.0** 开发与测试（理论全版本通杀）
 - LSPosed API: **102**
 
 ### 许可证
