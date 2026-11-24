@@ -33,7 +33,7 @@
 ./gradlew assembleDebug
 ```
 
-需要 `compileSdk 36`。
+需要 `compileSdk 37` / `buildTools 37.0.0`（AGP 9.1.1 / Gradle 9.3.1 / JDK 21）。
 
 ### 安装
 
@@ -44,7 +44,7 @@
 ### 支持版本
 
 - Pixiv: 基于 **6.183.0** 开发与测试（理论全版本通杀）
-- LSPosed API: **101**
+- LSPosed API: **102**
 
 ### 许可证
 
