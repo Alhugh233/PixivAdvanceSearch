@@ -14,7 +14,7 @@ android {
 
     defaultConfig {
         applicationId = "com.pixiv.pixiv.advancesearch"
-        minSdk = 27
+        minSdk = 28
         targetSdk = 34
         versionCode = 3
         versionName = "1.2"
@@ -65,4 +65,5 @@ dependencies {
     compileOnly("io.github.libxposed:api:102.0.0")
     implementation("io.github.libxposed:service:102.0.0")
     implementation("org.luckypray:dexkit:2.3.0")
+    implementation(libs.hiddenapibypass)
 }

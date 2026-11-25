@@ -12,6 +12,8 @@
 
 - **作品详情查看** — 长按作品 → 菜单新增「查看详情」。弹窗显示作品名称、作者名称、作品 PID、用户 PID，支持长按复制。
 
+- **多语言** — 跟随 Pixiv 当前语言，内置 English / 简体中文 / 日本語。
+
 ### 截图
 
 ![第一张](images/first.jpg) ![第二张](images/second.jpg)
@@ -44,7 +46,16 @@
 ### 支持版本
 
 - Pixiv: 基于 **6.204.0** 开发与测试（理论全版本通杀）
+- Android: **9.0+**（API 28+）
 - LSPosed API: **102**
+
+### 第三方开源
+
+- [libxposed](https://github.com/libxposed/api) — Apache-2.0
+- [DexKit](https://github.com/LuckyPray/DexKit) — Apache-2.0（`Core/` 目录为 LGPL-3.0）
+- [AndroidHiddenApiBypass](https://github.com/LSPosed/AndroidHiddenApiBypass) — Apache-2.0
+
+完整声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ### 许可证
 

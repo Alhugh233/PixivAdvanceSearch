@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">PixivAdvanceSearch</string>
+    <string name="pid_button">PID</string>
+    <string name="pid_search_title">PID 搜索</string>
+    <string name="pid_hint">输入 PID（作品/用户 ID）</string>
+    <string name="illust">插画</string>
+    <string name="novel">小说</string>
+    <string name="user">用户</string>
+    <string name="cancel">取消</string>
+    <string name="ok">确定</string>
+    <string name="invalid_pid">无效 PID</string>
+    <string name="failed_format">失败：%1$s</string>
+
+    <string name="display_settings">显示设置</string>
+    <string name="view_details">查看详情</string>
+    <string name="work_details_title">作品详情</string>
+    <string name="work_details_body">作品名称：%1$s\n作者名称：%2$s\n作品 PID：%3$s\n用户 PID：%4$s</string>
+</resources>

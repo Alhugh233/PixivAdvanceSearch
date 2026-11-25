@@ -2,9 +2,14 @@ package com.pixiv.pixiv.advancesearch
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.content.DialogInterface
 import android.content.Intent
+import android.content.res.AssetManager
+import android.content.res.Configuration
+import android.content.res.Resources
 import android.graphics.Color
+import android.os.Build
 import android.text.InputType
 import android.util.Log
 import android.util.TypedValue
@@ -20,6 +25,7 @@ import android.widget.Toast
 import io.github.libxposed.api.XposedInterface.PRIORITY_LOWEST
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
+import org.lsposed.hiddenapibypass.HiddenApiBypass
 import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.query.enums.StringMatchType
 import java.io.Serializable
@@ -53,10 +59,23 @@ class ModuleMain : XposedModule() {
     }
 
     override fun onPackageLoaded(param: XposedModuleInterface.PackageLoadedParam) {
+        // onPackageLoaded is Q+; Android 9 uses onPackageReady below.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         if (param.packageName != PIXIV) return
+        installForPackage(param.packageName, param.defaultClassLoader, param.applicationInfo.sourceDir)
+    }
 
-        val cl = param.defaultClassLoader
-        val apk = param.applicationInfo.sourceDir
+    override fun onPackageReady(param: XposedModuleInterface.PackageReadyParam) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return
+        if (param.packageName != PIXIV) return
+        installForPackage(param.packageName, param.classLoader, param.applicationInfo.sourceDir)
+    }
+
+    private var installedPackage: String? = null
+
+    private fun installForPackage(packageName: String, cl: ClassLoader, apk: String) {
+        if (installedPackage == packageName) return
+        installedPackage = packageName
         Log.i(TAG, "APK: $apk")
 
         // PID search doesn't need DexKit, install it first
@@ -107,7 +126,7 @@ class ModuleMain : XposedModule() {
         try {
             val toolbar = findToolbar(activity.window.decorView) ?: return
             val btn = TextView(activity).apply {
-                text = "PID"
+                text = str(activity, R.string.pid_button, "PID")
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(Color.parseColor("#1565C0"))
                 gravity = Gravity.CENTER
@@ -135,7 +154,7 @@ class ModuleMain : XposedModule() {
             setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 8))
         }
         val editText = EditText(activity).apply {
-            hint = "输入 PID (作品/用户 ID)"
+            hint = str(activity, R.string.pid_hint, "Enter PID (work/user ID)")
             inputType = InputType.TYPE_CLASS_NUMBER
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setTextColor(Color.BLACK); setHintTextColor(Color.GRAY)
@@ -145,15 +164,19 @@ class ModuleMain : XposedModule() {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(activity, 12) }
         }
-        val b1 = makeBtn(activity, "插画"); val b2 = makeBtn(activity, "小说"); val b3 = makeBtn(activity, "用户")
+        val b1 = makeBtn(activity, str(activity, R.string.illust, "Illust"))
+        val b2 = makeBtn(activity, str(activity, R.string.novel, "Novel"))
+        val b3 = makeBtn(activity, str(activity, R.string.user, "User"))
         b1.setOnClickListener { go(activity, editText, ILLUST_ACTIVITY, "ILLUST_ID") }
         b2.setOnClickListener { go(activity, editText, NOVEL_ACTIVITY, "NOVEL_ID") }
         b3.setOnClickListener { go(activity, editText, USER_ACTIVITY, "USER_ID") }
         row.addView(b1); row.addView(b2); row.addView(b3)
         panel.addView(editText); panel.addView(row)
 
-        AlertDialog.Builder(activity).setTitle("PID 搜索").setView(panel)
-            .setNegativeButton("取消", null).create().apply {
+        AlertDialog.Builder(activity)
+            .setTitle(str(activity, R.string.pid_search_title, "PID Search"))
+            .setView(panel)
+            .setNegativeButton(str(activity, R.string.cancel, "Cancel"), null).create().apply {
                 show()
                 getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(Color.GRAY)
             }
@@ -161,12 +184,14 @@ class ModuleMain : XposedModule() {
 
     private fun go(a: Activity, e: EditText, cls: String, key: String) {
         val pid = e.text.toString().trim().toLongOrNull()
-        if (pid == null) { toast(a, "无效 PID"); return }
+        if (pid == null) { toast(a, str(a, R.string.invalid_pid, "Invalid PID")); return }
         try {
             a.startActivity(Intent(a, Class.forName(cls, false, a.classLoader)).apply {
                 putExtra(key, pid); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             })
-        } catch (ex: Exception) { toast(a, "失败: ${ex.message}") }
+        } catch (ex: Exception) {
+            toast(a, str(a, R.string.failed_format, "Failed: %1\$s", ex.message ?: ""))
+        }
     }
 
     private fun makeBtn(a: Activity, t: String) = Button(a).apply {
@@ -178,11 +203,83 @@ class ModuleMain : XposedModule() {
     private fun dp(c: android.content.Context, d: Int) = (d * c.resources.displayMetrics.density).toInt()
 
     // ================================================================
+    // Module resources / i18n
+    // ================================================================
+
+    private var moduleRes: Resources? = null
+    private var moduleResConfig: Configuration? = null
+
+    private fun createAssetManager(): AssetManager {
+        return HiddenApiBypass.newInstance(AssetManager::class.java) as AssetManager
+    }
+
+    private fun addAssetPath(assets: AssetManager, path: String): Int {
+        return HiddenApiBypass.invoke(
+            AssetManager::class.java,
+            assets,
+            "addAssetPath",
+            path
+        ) as? Int ?: 0
+    }
+
+    /**
+     * Load the module APK resources (not the host app's) so R.string.* follows
+     * the host app's current locale. Falls back to the public PackageManager API.
+     */
+    private fun moduleResources(context: Context?): Resources? {
+        if (context == null) return moduleRes
+        val config = context.resources.configuration
+        moduleRes?.let { if (moduleResConfig == config) return it }
+
+        val info = try {
+            getModuleApplicationInfo()
+        } catch (e: Throwable) {
+            Log.e(TAG, "module info failed: ${e.message}", e)
+            return null
+        }
+
+        return try {
+            val assets = createAssetManager()
+            val cookie = addAssetPath(assets, info.sourceDir)
+            if (cookie == 0) throw IllegalStateException("addAssetPath returned 0")
+            Resources(assets, context.resources.displayMetrics, Configuration(config)).also {
+                moduleRes = it
+                moduleResConfig = Configuration(config)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "load module resources failed: ${e.message}", e)
+            try {
+                context.packageManager.getResourcesForApplication(info).also {
+                    moduleRes = it
+                    moduleResConfig = Configuration(config)
+                }
+            } catch (e2: Throwable) {
+                Log.e(TAG, "getResourcesForApplication failed: ${e2.message}", e2)
+                null
+            }
+        }
+    }
+
+    private fun str(context: Context?, id: Int, fallback: String, vararg args: Any): String {
+        return try {
+            val res = moduleResources(context)
+            when {
+                res == null -> if (args.isEmpty()) fallback else String.format(fallback, *args)
+                args.isEmpty() -> res.getString(id)
+                else -> res.getString(id, *args)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "get string $id failed: ${e.message}", e)
+            if (args.isEmpty()) fallback else String.format(fallback, *args)
+        }
+    }
+
+    // ================================================================
     // Work Detail — fully DexKit-based discovery + hook
     //
     // Chain: layout_inflater → builder params (pe/he) → items (p) / item listener (r)
-    // → builder.create() (te/le). Hook create() BEFORE proceed: append "查看详情",
-    // wrap the item listener, then show the work info dialog.
+    // → builder.create() (te/le). Hook create() BEFORE proceed: append the localized
+    // detail label, wrap the item listener, then show the work info dialog.
     // ================================================================
 
     private fun installWorkDetailHook(bridge: DexKitBridge, classLoader: ClassLoader) {
@@ -230,6 +327,9 @@ class ModuleMain : XposedModule() {
             val peField = teClass.declaredFields.find { it.type == peClass }
             if (peField == null) { Log.e(TAG, "WD: pe field not found in te"); return false }
             peField.isAccessible = true
+            val peContextField = peClass.declaredFields
+                .firstOrNull { Context::class.java.isAssignableFrom(it.type) }
+                ?.apply { isAccessible = true }
             val safeItems = itemsField!!
             val safeListener = listenerField!!
             for (createMethod in teClass.declaredMethods) {
@@ -241,14 +341,18 @@ class ModuleMain : XposedModule() {
                     val peObj = peField.get(teObj)
                     @Suppress("UNCHECKED_CAST")
                     val items = safeItems.get(peObj) as? Array<CharSequence>
+                    val peContext = try {
+                        peContextField?.get(peObj) as? Context
+                    } catch (_: Exception) { null }
+                    val detailLabel = str(peContext, R.string.view_details, "View details")
 
-                    if (items != null && items.none { it?.toString() == "查看详情" }) {
+                    if (items != null && items.none { it?.toString() == detailLabel }) {
                         val origListener = safeListener.get(peObj) as? DialogInterface.OnClickListener
                         val workData = if (origListener != null) extractWorkFromListener(origListener) else null
 
                         // Do not touch unrelated list dialogs (profile edit, settings, ...).
                         if (origListener != null && workData != null && isWorkItem(workData)) {
-                            val newItems = items + "查看详情"
+                            val newItems = items + detailLabel
                             safeItems.set(peObj, newItems)
 
                             val detailIdx = newItems.size - 1
@@ -355,19 +459,24 @@ class ModuleMain : XposedModule() {
                     "title=$title name=$userName workPid=$workPid userPid=$userPid")
 
             val ctx = (dialog as? android.app.Dialog)?.context ?: return
+            val body = str(
+                ctx, R.string.work_details_body,
+                "Title: %1\$s\nAuthor: %2\$s\nWork PID: %3\$s\nUser PID: %4\$s",
+                title, userName, workPid, userPid
+            )
 
             val tv = TextView(ctx).apply {
                 setTextIsSelectable(true)
-                text = "作品名称: $title\n作者名称: $userName\n作品 PID: $workPid\n用户 PID: $userPid"
+                text = body
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
                 setTextColor(Color.BLACK)
                 setPadding(dp(ctx, 16), dp(ctx, 16), dp(ctx, 16), dp(ctx, 8))
             }
 
             AlertDialog.Builder(ctx)
-                .setTitle("作品详情")
+                .setTitle(str(ctx, R.string.work_details_title, "Work details"))
                 .setView(tv)
-                .setPositiveButton("确定", null)
+                .setPositiveButton(str(ctx, R.string.ok, "OK"), null)
                 .show()
         } catch (e: Exception) { Log.e(TAG, "showDetail: ${e.message}", e) }
     }
@@ -490,7 +599,7 @@ class ModuleMain : XposedModule() {
         try {
             val toolbar = findToolbar(activity.window.decorView)
             val btn = TextView(activity).apply {
-                text = "显示设置"
+                text = str(activity, R.string.display_settings, "Display settings")
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTextColor(Color.parseColor("#C62828"))
                 gravity = Gravity.CENTER
@@ -583,6 +692,9 @@ class ModuleMain : XposedModule() {
             val peField = teClass.declaredFields.find { it.type == peClass }
             if (peField == null) { Log.e(TAG, "WD(fb): pe field not in te"); return }
             peField.isAccessible = true
+            val peContextField = peClass.declaredFields
+                .firstOrNull { Context::class.java.isAssignableFrom(it.type) }
+                ?.apply { isAccessible = true }
 
             for (m in teClass.declaredMethods) {
                 if (m.parameterTypes.isNotEmpty() || m.returnType == Void.TYPE) continue
@@ -591,16 +703,22 @@ class ModuleMain : XposedModule() {
                     val peObj = peField.get(teObj)
                     @Suppress("UNCHECKED_CAST")
                     val items = itemsField.get(peObj) as? Array<CharSequence>
-                    if (items != null) {
+                    val peContext = try {
+                        peContextField?.get(peObj) as? Context
+                    } catch (_: Exception) { null }
+                    val detailLabel = str(peContext, R.string.view_details, "View details")
+                    if (items != null && items.none { it?.toString() == detailLabel }) {
                         val origListener = listenerField.get(peObj) as? DialogInterface.OnClickListener
                         val workData = if (origListener != null) extractWorkFromListener(origListener) else null
-                        val newItems = items + "查看详情"
-                        itemsField.set(peObj, newItems)
-                        val idx = newItems.size - 1
-                        listenerField.set(peObj, DialogInterface.OnClickListener { dlg, which ->
-                            if (which == idx && workData != null) showWorkDetailDialog(dlg, workData)
-                            else if (origListener != null) origListener.onClick(dlg, which)
-                        })
+                        if (origListener != null && workData != null && isWorkItem(workData)) {
+                            val newItems = items + detailLabel
+                            itemsField.set(peObj, newItems)
+                            val idx = newItems.size - 1
+                            listenerField.set(peObj, DialogInterface.OnClickListener { dlg, which ->
+                                if (which == idx) showWorkDetailDialog(dlg, workData)
+                                else origListener.onClick(dlg, which)
+                            })
+                        }
                     }
                     chain.proceed()
                 }

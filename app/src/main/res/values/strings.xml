@@ -1,3 +1,19 @@
 <resources>
     <string name="app_name">PixivAdvanceSearch</string>
+
+    <string name="pid_button">PID</string>
+    <string name="pid_search_title">PID Search</string>
+    <string name="pid_hint">Enter PID (work/user ID)</string>
+    <string name="illust">Illust</string>
+    <string name="novel">Novel</string>
+    <string name="user">User</string>
+    <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+    <string name="invalid_pid">Invalid PID</string>
+    <string name="failed_format">Failed: %1$s</string>
+
+    <string name="display_settings">Display settings</string>
+    <string name="view_details">View details</string>
+    <string name="work_details_title">Work details</string>
+    <string name="work_details_body">Title: %1$s\nAuthor: %2$s\nWork PID: %3$s\nUser PID: %4$s</string>
 </resources>
