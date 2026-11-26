@@ -485,56 +485,69 @@ class ModuleMain : XposedModule() {
         }
     }
 
+    private fun findHostRoot(seg: View, id: Int): ViewGroup? {
+        var parent = seg.parent
+        while (parent is ViewGroup) {
+            if (parent.findViewById<View>(id) != null) return parent
+            parent = parent.parent
+        }
+        return null
+    }
+
     private fun getOrCreatePidPage(seg: View): PidPageState? {
         (seg.getTag(pidPageKey) as? PidPageState)?.let { return it }
-        val root = seg.rootView
         val context = seg.context
 
         val typeId = idOf(context, "type_fragment_container")
-        val type = if (typeId != 0) root.findViewById<ViewGroup>(typeId) else null
-        val rootGroup = root as? ViewGroup
-        if (type != null && rootGroup != null && type.parent === rootGroup) {
-            val page = buildPidPage(context)
-            val lp = if (rootGroup is LinearLayout)
-                LinearLayout.LayoutParams(MATCH, 0, 1f)
-            else
-                ViewGroup.LayoutParams(MATCH, MATCH)
-            rootGroup.addView(page, lp)
-            Log.i(TAG, "PID: page host=type")
-            return PidPageState(page, listOf(type)).also { seg.setTag(pidPageKey, it) }
+        if (typeId != 0) {
+            val root = findHostRoot(seg, typeId)
+            val type = root?.findViewById<ViewGroup>(typeId)
+            if (root != null && type != null) {
+                val page = buildPidPage(context)
+                val lp = if (root is LinearLayout)
+                    LinearLayout.LayoutParams(MATCH, 0, 1f)
+                else
+                    ViewGroup.LayoutParams(MATCH, MATCH)
+                root.addView(page, lp)
+                Log.i(TAG, "PID: page host=type")
+                return PidPageState(page, listOf(type)).also { seg.setTag(pidPageKey, it) }
+            }
         }
 
         val contentId = idOf(context, "content_container")
-        val content = if (contentId != 0) root.findViewById<ViewGroup>(contentId) else null
-        if (content != null) {
-            val page = buildPidPage(context)
-            // Keep it at the bottom of the stack; search overlays are hidden in PID mode.
-            content.addView(page, 0, FrameLayout.LayoutParams(MATCH, MATCH))
-            val viewPager = viewById(root, context, "view_pager")
-            val userContainer = viewById(root, context, "search_user_result_fragment_container")
-            val historyContainer = viewById(root, context, "history_fragment_container")
-            val autoCompleteContainer = viewById(root, context, "auto_complete_fragment_container")
-            val tabLayout = viewById(root, context, "tab_layout")
-            val state = PidPageState(
-                page,
-                listOfNotNull(
-                    viewPager, userContainer, historyContainer, autoCompleteContainer, tabLayout
+        if (contentId != 0) {
+            val root = findHostRoot(seg, contentId)
+            val content = root?.findViewById<ViewGroup>(contentId)
+            if (root != null && content != null) {
+                val page = buildPidPage(context)
+                // Keep it at the bottom of the stack; search overlays are hidden in PID mode.
+                content.addView(page, 0, FrameLayout.LayoutParams(MATCH, MATCH))
+                val viewPager = viewById(root, context, "view_pager")
+                val userContainer = viewById(root, context, "search_user_result_fragment_container")
+                val historyContainer = viewById(root, context, "history_fragment_container")
+                val autoCompleteContainer = viewById(root, context, "auto_complete_fragment_container")
+                val tabLayout = viewById(root, context, "tab_layout")
+                val state = PidPageState(
+                    page,
+                    listOfNotNull(
+                        viewPager, userContainer, historyContainer, autoCompleteContainer, tabLayout
+                    )
                 )
-            )
-            // If any content overlay comes back (new search, search history, or
-            // autocomplete), leave PID mode instead of covering it.
-            listOfNotNull(
-                viewPager, userContainer, historyContainer, autoCompleteContainer
-            ).forEach { contentView ->
-                contentView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-                    if (state.shown && contentView.visibility == View.VISIBLE) {
-                        contentView.post { exitPidPage(seg, state) }
+                // If any content overlay comes back (new search, search history, or
+                // autocomplete), leave PID mode instead of covering it.
+                listOfNotNull(
+                    viewPager, userContainer, historyContainer, autoCompleteContainer
+                ).forEach { contentView ->
+                    contentView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                        if (state.shown && contentView.visibility == View.VISIBLE) {
+                            contentView.post { exitPidPage(seg, state) }
+                        }
                     }
                 }
+                seg.setTag(pidPageKey, state)
+                Log.i(TAG, "PID: page host=content")
+                return state
             }
-            seg.setTag(pidPageKey, state)
-            Log.i(TAG, "PID: page host=content")
-            return state
         }
 
         Log.e(TAG, "PID: content host not found")
