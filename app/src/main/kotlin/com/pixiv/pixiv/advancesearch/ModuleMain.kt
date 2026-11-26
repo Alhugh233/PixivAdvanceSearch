@@ -252,23 +252,29 @@ class ModuleMain : XposedModule() {
 
     private fun pidSegmentHandler(seg: View, original: Any?): java.lang.reflect.InvocationHandler {
         return java.lang.reflect.InvocationHandler { proxy, method, args ->
-            when (method.name) {
-                "e" -> {
-                    val index = args?.getOrNull(0) as? Int
-                    if (index == PID_SEGMENT_INDEX && seg.getTag(pidAddedKey) == true) {
-                        showPidPage(seg)
-                        // Fallback if getCurrentSelectedIndex was inlined by R8:
-                        // keep av8.onResume() from resetting the selected segment.
-                        seg.post {
-                            val state = seg.getTag(pidPageKey) as? PidPageState
-                            if (state?.shown == true) setSegmentIndexField(seg, 2)
-                        }
-                        null
-                    } else {
-                        hidePidPage(seg)
-                        invokeOriginal(original, method, args)
-                    }
+            // Do not rely on the obfuscated method name; the segment callback is
+            // the listener method taking a single int.
+            val isSelectCallback = method.parameterTypes.size == 1 &&
+                method.parameterTypes[0] == java.lang.Integer.TYPE
+            if (isSelectCallback) {
+                val index = args?.getOrNull(0) as? Int
+                if (index == PID_SEGMENT_INDEX) {
+                    Log.i(TAG, "PID: segment callback index=$index added=${seg.getTag(pidAddedKey) == true}")
                 }
+                if (index == PID_SEGMENT_INDEX && seg.getTag(pidAddedKey) == true) {
+                    showPidPage(seg)
+                    // Fallback if getCurrentSelectedIndex was inlined by R8:
+                    // keep av8.onResume() from resetting the selected segment.
+                    seg.post {
+                        val state = seg.getTag(pidPageKey) as? PidPageState
+                        if (state?.shown == true) setSegmentIndexField(seg, 2)
+                    }
+                    null
+                } else {
+                    hidePidPage(seg)
+                    invokeOriginal(original, method, args)
+                }
+            } else when (method.name) {
                 "equals" -> proxy === args?.getOrNull(0)
                 "hashCode" -> System.identityHashCode(proxy)
                 "toString" -> "PidSegmentListener"
@@ -323,11 +329,12 @@ class ModuleMain : XposedModule() {
     }
 
     private fun wrapPidListener(seg: View): Boolean {
-        if (seg.getTag(pidWrapperKey) != null) return true
+        val existing = seg.getTag(pidWrapperKey)
         try {
             val field = seg.javaClass.getField("c")
             field.isAccessible = true
             val current = field.get(seg) ?: return false
+            if (current === existing) return true
             val listenerClass = field.type
             val wrapper = java.lang.reflect.Proxy.newProxyInstance(
                 listenerClass.classLoader,
@@ -340,7 +347,7 @@ class ModuleMain : XposedModule() {
             return true
         } catch (e: Throwable) {
             Log.w(TAG, "PID: listener wrap failed: ${e.message}")
-            return seg.getTag(pidWrapperKey) != null
+            return existing != null
         }
     }
 
