@@ -641,7 +641,8 @@ class ModuleMain : XposedModule() {
 
     private fun findNavigationView(root: View?): View? {
         if (root == null) return null
-        if (root.javaClass.name.contains("NavigationView")) return root
+        // BottomNavigationView also contains "NavigationView" in its class name.
+        if (root.javaClass.name == "com.google.android.material.navigation.NavigationView") return root
         if (root is ViewGroup) {
             for (i in 0 until root.childCount) {
                 findNavigationView(root.getChildAt(i))?.let { return it }
