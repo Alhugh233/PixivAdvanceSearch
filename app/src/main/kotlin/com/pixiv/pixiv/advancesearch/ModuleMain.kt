@@ -3,6 +3,7 @@ package com.pixiv.pixiv.advancesearch
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.DialogInterface
 import android.content.Intent
 import android.content.res.AssetManager
@@ -14,11 +15,12 @@ import android.text.InputType
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -41,6 +43,7 @@ class ModuleMain : XposedModule() {
         private const val ILLUST_ACTIVITY = "jp.pxv.android.feature.illustviewer.detail.IllustDetailSingleActivity"
         private const val NOVEL_ACTIVITY = "jp.pxv.android.feature.novelviewer.noveltext.NovelTextActivity"
         private const val USER_ACTIVITY = "jp.pxv.android.feature.userprofile.activity.UserProfileActivity"
+        private const val DISPLAY_SETTINGS_MENU_ID = 0x4D4F4455
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 
@@ -81,7 +84,7 @@ class ModuleMain : XposedModule() {
         // PID search doesn't need DexKit, install it first
         installPidSearch(cl)
 
-        // Display settings — inject item into SettingActivity
+        // Display settings — add item to MainActivity's NavigationView sidebar
         installDisplaySetting(cl)
 
         val bridge = try { DexKitBridge.create(apk) } catch (e: Throwable) {
@@ -570,59 +573,118 @@ class ModuleMain : XposedModule() {
     }
 
     // ================================================================
-    // Display Setting — inject item into SettingActivity list
+    // Display Setting — add an item to Pixiv's NavigationView sidebar
     // ================================================================
 
     private fun installDisplaySetting(classLoader: ClassLoader) {
         try {
-            val settingClass = classLoader.loadClass(
-                "jp.pxv.android.feature.setting.list.SettingActivity")
-            val onCreate = settingClass.getDeclaredMethod("onCreate", android.os.Bundle::class.java)
+            val navClass = classLoader.loadClass(
+                "com.google.android.material.navigation.NavigationView")
+            val setter = navClass.declaredMethods.firstOrNull {
+                it.name == "setNavigationItemSelectedListener" && it.parameterTypes.size == 1
+            } ?: run {
+                Log.e(TAG, "Display: NavigationView setter not found")
+                return
+            }
+            val listenerClass = setter.parameterTypes[0]
 
+            hook(setter).intercept { chain ->
+                val nav = chain.thisObject as View
+                val original = chain.getArg(0)
+                val wrapper = java.lang.reflect.Proxy.newProxyInstance(
+                    listenerClass.classLoader,
+                    arrayOf(listenerClass),
+                    java.lang.reflect.InvocationHandler { proxy, method, args ->
+                        when (method.name) {
+                            "onNavigationItemSelected" -> {
+                                val item = args?.getOrNull(0) as? MenuItem
+                                if (item?.itemId == DISPLAY_SETTINGS_MENU_ID) {
+                                    openViewingSettings(nav.context)
+                                    true
+                                } else if (original != null) {
+                                    method.invoke(original, item)
+                                } else {
+                                    false
+                                }
+                            }
+                            "equals" -> proxy === args?.getOrNull(0)
+                            "hashCode" -> System.identityHashCode(proxy)
+                            "toString" -> "DisplaySettingsNavigationListener"
+                            else -> null
+                        }
+                    }
+                )
+                chain.proceed(arrayOf<Any>(wrapper))
+                val activity = nav.context.findActivity()
+                if (activity != null && activity.javaClass.name == MAIN_ACTIVITY) {
+                    addDisplayMenuItem(activity, nav)
+                }
+            }
+
+            val mainClass = classLoader.loadClass(MAIN_ACTIVITY)
+            val onCreate = mainClass.getDeclaredMethod("onCreate", android.os.Bundle::class.java)
             hook(onCreate).setPriority(PRIORITY_LOWEST).intercept { chain ->
                 chain.proceed()
                 val activity = chain.thisObject as Activity
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    injectDisplayItem(activity)
+                val nav = findNavigationView(activity.window.decorView)
+                if (nav == null) {
+                    Log.e(TAG, "Display: NavigationView not found")
+                } else {
+                    addDisplayMenuItem(activity, nav)
                 }
             }
-            Log.i(TAG, "Display: SettingActivity.onCreate()")
-        } catch (e: Exception) {
+            Log.i(TAG, "Display: sidebar hooks installed")
+        } catch (e: Throwable) {
             Log.e(TAG, "Display hook FAILED: ${e.message}", e)
         }
     }
 
-    private val displayInjected = hashSetOf<Int>()
-
-    private fun injectDisplayItem(activity: Activity) {
-        if (!displayInjected.add(System.identityHashCode(activity))) return
-        try {
-            val toolbar = findToolbar(activity.window.decorView)
-            val btn = TextView(activity).apply {
-                text = str(activity, R.string.display_settings, "Display settings")
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(Color.parseColor("#C62828"))
-                gravity = Gravity.CENTER
-                setPadding(dp(activity, 12), 0, dp(activity, 12), 0)
-                setOnClickListener {
-                    activity.startActivity(Intent(Intent.ACTION_VIEW,
-                        android.net.Uri.parse("https://www.pixiv.net/settings/viewing")))
-                }
+    private fun findNavigationView(root: View?): View? {
+        if (root == null) return null
+        if (root.javaClass.name.contains("NavigationView")) return root
+        if (root is ViewGroup) {
+            for (i in 0 until root.childCount) {
+                findNavigationView(root.getChildAt(i))?.let { return it }
             }
-            if (toolbar != null) {
-                toolbar.addView(btn, android.widget.Toolbar.LayoutParams(
-                    WRAP, MATCH, Gravity.END or Gravity.CENTER_VERTICAL))
-            } else {
-                // Fallback: add to DecorView below status bar
-                val params = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.END)
-                params.topMargin = dp(activity, 48)
-                params.rightMargin = dp(activity, 8)
-                (activity.window.decorView as FrameLayout).addView(btn, params)
-            }
-            Log.i(TAG, "Display button injected into Settings")
-        } catch (e: Exception) {
-            Log.e(TAG, "injectDisplayItem: ${e.message}", e)
         }
+        return null
+    }
+
+    private fun addDisplayMenuItem(activity: Activity, nav: View) {
+        try {
+            val menu = nav.javaClass.getMethod("getMenu").invoke(nav) as? Menu ?: return
+            if (menu.findItem(DISPLAY_SETTINGS_MENU_ID) != null) return
+            val item: MenuItem = menu.add(
+                Menu.NONE,
+                DISPLAY_SETTINGS_MENU_ID,
+                1000,
+                str(activity, R.string.display_settings, "Display settings")
+            )
+            item.setIcon(android.R.drawable.ic_menu_preferences)
+            nav.invalidate()
+            Log.i(TAG, "Display: sidebar item added")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Display: add sidebar item failed: ${e.message}", e)
+        }
+    }
+
+    private fun openViewingSettings(context: Context) {
+        val activity = context.findActivity() ?: return
+        try {
+            activity.startActivity(Intent(Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://www.pixiv.net/settings/viewing")))
+        } catch (e: Throwable) {
+            Log.e(TAG, "open display settings failed: ${e.message}", e)
+        }
+    }
+
+    private fun Context.findActivity(): Activity? {
+        var context: Context = this
+        while (context is ContextWrapper) {
+            if (context is Activity) return context
+            context = context.baseContext
+        }
+        return null
     }
 
     // ================================================================

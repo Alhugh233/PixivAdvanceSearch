@@ -12,6 +12,8 @@
 
 - **作品详情查看** — 长按作品 → 菜单新增「查看详情」。弹窗显示作品名称、作者名称、作品 PID、用户 PID，支持长按复制。
 
+- **显示设置** — 侧边栏新增「显示设置」选项，点击打开网页版浏览与显示设置。
+
 - **多语言** — 跟随 Pixiv 当前语言，内置 English / 简体中文 / 日本語。
 
 ### 截图
@@ -25,6 +27,7 @@
 | 试用天数 | `um9.w()` | DexKit: `core_local_preference_key_first_launch_time_millis` + `86400000L` |
 | AB 实验 | `i23.a()` | DexKit: 字符串 `"] cannot be converted to a boolean."` |
 | PID 按钮 | `MainActivity` Toolbar | View 树遍历查找 Toolbar |
+| 显示设置 | `MainActivity` 侧边栏 | 查找 `NavigationView`，添加菜单项并包装原 listener |
 | 查看详情 | 对话框 builder 的 `create()` | DexKit: `"layout_inflater"` → builder 参数类 → `addInvoke` → builder → `create()` |
 
 所有 Hook 优先使用 DexKit 字节码搜索定位目标方法，失败后回退直接类名。
