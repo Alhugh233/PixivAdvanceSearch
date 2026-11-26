@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="pid_page_tag" type="id" />
+    <item name="pid_added_tag" type="id" />
+    <item name="pid_wrapper_tag" type="id" />
+</resources>

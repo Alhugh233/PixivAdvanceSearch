@@ -116,9 +116,10 @@ class ModuleMain : XposedModule() {
     // show a dedicated PID page (direct class name + DexKit fallback)
     // ================================================================
 
-    private val pidPageKey by lazy { View.generateViewId() }
-    private val pidAddedKey by lazy { View.generateViewId() }
-    private val pidWrapperKey by lazy { View.generateViewId() }
+    // View.setTag(int, Object) only accepts application-specific resource ids.
+    private val pidPageKey = R.id.pid_page_tag
+    private val pidAddedKey = R.id.pid_added_tag
+    private val pidWrapperKey = R.id.pid_wrapper_tag
 
     private class PidPageState(
         val page: View,
