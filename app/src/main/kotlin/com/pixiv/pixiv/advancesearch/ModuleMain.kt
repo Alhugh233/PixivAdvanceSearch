@@ -19,9 +19,12 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import io.github.libxposed.api.XposedInterface.PRIORITY_LOWEST
@@ -44,6 +47,9 @@ class ModuleMain : XposedModule() {
         private const val NOVEL_ACTIVITY = "jp.pxv.android.feature.novelviewer.noveltext.NovelTextActivity"
         private const val USER_ACTIVITY = "jp.pxv.android.feature.userprofile.activity.UserProfileActivity"
         private const val DISPLAY_SETTINGS_MENU_ID = 0x4D4F4455
+        private const val SEARCH_SEGMENT_CLASS =
+            "jp.pxv.android.feature.component.androidview.segmentedcontrol.SegmentedLayout"
+        private const val PID_SEGMENT_INDEX = 3
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
 
@@ -81,15 +87,15 @@ class ModuleMain : XposedModule() {
         installedPackage = packageName
         Log.i(TAG, "APK: $apk")
 
-        // PID search doesn't need DexKit, install it first
-        installPidSearch(cl)
-
         // Display settings — add item to MainActivity's NavigationView sidebar
         installDisplaySetting(cl)
 
         val bridge = try { DexKitBridge.create(apk) } catch (e: Throwable) {
             Log.e(TAG, "DexKit create failed: ${e.message}", e); null
         }
+
+        // PID search — direct class name first, DexKit fallback if it changes.
+        installPidSegment(cl, bridge)
 
         if (bridge != null && bridge.isValid) {
             installTrialHook(bridge, cl)
@@ -106,100 +112,539 @@ class ModuleMain : XposedModule() {
     }
 
     // ================================================================
-    // PID Search — toolbar button via view-tree walk (no DexKit needed)
+    // PID Search — add a PID segment to the search page top bar and
+    // show a dedicated PID page (direct class name + DexKit fallback)
     // ================================================================
 
-    private val buttonInjected = hashSetOf<Int>()
+    private val pidPageKey by lazy { View.generateViewId() }
+    private val pidAddedKey by lazy { View.generateViewId() }
+    private val pidWrapperKey by lazy { View.generateViewId() }
 
-    private fun installPidSearch(classLoader: ClassLoader) {
+    private class PidPageState(
+        val page: View,
+        val contentViews: List<View>,
+        var previousVisibilities: IntArray = IntArray(0),
+        var previousIndex: Int = 0,
+        var shown: Boolean = false,
+        var skipRestore: Boolean = false
+    )
+
+    private fun findSegmentClass(classLoader: ClassLoader, bridge: DexKitBridge?): Class<*>? {
+        // SegmentedLayout is unobfuscated in 6.204.0; DexKit is the safety net.
         try {
-            val mainClass = classLoader.loadClass(MAIN_ACTIVITY)
-            val onCreate = mainClass.getDeclaredMethod("onCreate", android.os.Bundle::class.java)
-            hook(onCreate).setPriority(PRIORITY_LOWEST).intercept { chain ->
-                chain.proceed()
-                val a = chain.thisObject as Activity
-                android.os.Handler(android.os.Looper.getMainLooper()).post { injectPidButton(a) }
-            }
-            Log.i(TAG, "PID: MainActivity.onCreate()")
-        } catch (e: Exception) { Log.e(TAG, "PID FAIL: ${e.message}", e) }
-    }
+            return classLoader.loadClass(SEARCH_SEGMENT_CLASS)
+        } catch (e: Throwable) {
+            Log.w(TAG, "PID: direct class load failed: ${e.message}")
+        }
 
-    private fun injectPidButton(activity: Activity) {
-        if (!buttonInjected.add(System.identityHashCode(activity))) return
-        try {
-            val toolbar = findToolbar(activity.window.decorView) ?: return
-            val btn = TextView(activity).apply {
-                text = str(activity, R.string.pid_button, "PID")
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                setTextColor(Color.parseColor("#1565C0"))
-                gravity = Gravity.CENTER
-                setPadding(dp(activity, 12), 0, dp(activity, 12), 0)
-                setOnClickListener { showPidDialog(activity) }
+        if (bridge == null || !bridge.isValid) return null
+        val candidates = listOf(
+            "setOnSelectSegmentListener",
+            "getCurrentSelectedIndex",
+            "setSelectedSegment"
+        )
+        for (methodName in candidates) {
+            try {
+                val results = bridge.findMethod {
+                    matcher { name = methodName }
+                }
+                for (result in results) {
+                    val cls = runCatching { result.getClassInstance(classLoader) }
+                        .getOrNull() ?: continue
+                    if (View::class.java.isAssignableFrom(cls)) {
+                        Log.i(TAG, "PID: SegmentedLayout=${cls.name} via DexKit ($methodName)")
+                        return cls
+                    }
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "PID: DexKit search $methodName failed: ${e.message}")
             }
-            toolbar.addView(btn, android.widget.Toolbar.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.END or Gravity.CENTER_VERTICAL))
-            Log.i(TAG, "PID button injected")
-        } catch (e: Exception) { Log.e(TAG, "injectBtn: ${e.message}", e) }
-    }
-
-    private fun findToolbar(root: View?): ViewGroup? {
-        if (root == null) return null
-        if (root.javaClass.name.contains("Toolbar") && root is ViewGroup) return root
-        if (root is ViewGroup)
-            for (i in 0 until root.childCount) findToolbar(root.getChildAt(i))?.let { return it }
+        }
+        Log.e(TAG, "PID: SegmentedLayout not found")
         return null
     }
 
-    private fun showPidDialog(activity: Activity) {
-        val panel = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(activity, 16), dp(activity, 16), dp(activity, 16), dp(activity, 8))
+    private fun installPidSegment(classLoader: ClassLoader, bridge: DexKitBridge?) {
+        try {
+            val segClass = findSegmentClass(classLoader, bridge) ?: return
+            val setter = segClass.methods.firstOrNull {
+                it.name == "setOnSelectSegmentListener" && it.parameterTypes.size == 1
+            } ?: segClass.declaredFields.asSequence()
+                .filter {
+                    it.type.isInterface &&
+                        !it.type.name.startsWith("java.") &&
+                        !it.type.name.startsWith("android.")
+                }
+                .mapNotNull { field ->
+                    segClass.methods.firstOrNull {
+                        it.parameterTypes.size == 1 && it.parameterTypes[0] == field.type
+                    }
+                }
+                .firstOrNull()
+            if (setter == null) {
+                Log.e(TAG, "PID: segment listener setter not found")
+                return
+            }
+            val listenerClass = setter.parameterTypes[0]
+
+            hook(setter).intercept { chain ->
+                val seg = chain.thisObject as? View
+                var proxy: Any? = null
+                if (seg != null) {
+                    try {
+                        proxy = java.lang.reflect.Proxy.newProxyInstance(
+                            listenerClass.classLoader,
+                            arrayOf(listenerClass),
+                            pidSegmentHandler(seg, chain.getArg(0))
+                        )
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "PID: listener proxy failed: ${e.message}", e)
+                    }
+                }
+                val wrapper = proxy
+                if (seg != null && wrapper != null) {
+                    chain.proceed(arrayOf<Any>(wrapper))
+                    seg.setTag(pidWrapperKey, wrapper)
+                    seg.post { ensurePidSegment(seg) }
+                } else {
+                    chain.proceed()
+                }
+                null
+            }
+
+            // Fallback for R8-inlined setters: wrap the listener directly after attach.
+            try {
+                val ctor = segClass.getConstructor(
+                    Context::class.java, android.util.AttributeSet::class.java
+                )
+                hook(ctor).intercept { chain ->
+                    chain.proceed()
+                    try {
+                        val seg = chain.thisObject as View
+                        seg.post { ensurePidSegment(seg) }
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "PID: constructor post failed: ${e.message}")
+                    }
+                    null
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "PID: constructor hook failed: ${e.message}")
+            }
+
+            // av8.onResume() resets the selected segment to the last content type.
+            // While the PID page is shown, report USER (2) so it does not switch away.
+            try {
+                val getter = segClass.getMethod("getCurrentSelectedIndex")
+                hook(getter).intercept { chain ->
+                    val seg = chain.thisObject as? View
+                    val state = seg?.getTag(pidPageKey) as? PidPageState
+                    if (state?.shown == true) 2 else chain.proceed()
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "PID: getter hook failed: ${e.message}")
+            }
+            Log.i(TAG, "PID: segment hook installed")
+        } catch (e: Throwable) {
+            Log.e(TAG, "PID hook FAILED: ${e.message}", e)
         }
-        val editText = EditText(activity).apply {
-            hint = str(activity, R.string.pid_hint, "Enter PID (work/user ID)")
+    }
+
+    private fun pidSegmentHandler(seg: View, original: Any?): java.lang.reflect.InvocationHandler {
+        return java.lang.reflect.InvocationHandler { proxy, method, args ->
+            when (method.name) {
+                "e" -> {
+                    val index = args?.getOrNull(0) as? Int
+                    if (index == PID_SEGMENT_INDEX && seg.getTag(pidAddedKey) == true) {
+                        showPidPage(seg)
+                        // Fallback if getCurrentSelectedIndex was inlined by R8:
+                        // keep av8.onResume() from resetting the selected segment.
+                        seg.post {
+                            val state = seg.getTag(pidPageKey) as? PidPageState
+                            if (state?.shown == true) setSegmentIndexField(seg, 2)
+                        }
+                        null
+                    } else {
+                        hidePidPage(seg)
+                        invokeOriginal(original, method, args)
+                    }
+                }
+                "equals" -> proxy === args?.getOrNull(0)
+                "hashCode" -> System.identityHashCode(proxy)
+                "toString" -> "PidSegmentListener"
+                else -> invokeOriginal(original, method, args)
+            }
+        }
+    }
+
+    private fun invokeOriginal(original: Any?, method: Method, args: Array<out Any?>?): Any? {
+        if (original == null) return null
+        return try {
+            method.invoke(original, *args.orEmpty())
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            throw e.cause ?: e
+        }
+    }
+
+    private fun ensurePidSegment(seg: View) {
+        if (!seg.isAttachedToWindow) return
+        val inner = (seg as? ViewGroup)?.getChildAt(0) as? ViewGroup ?: return
+        if (inner.childCount != 3) return
+        if (!isSearchSegmentedLayout(inner, seg.context)) {
+            Log.w(TAG, "PID: 3-segment layout ignored (labels do not match search)")
+            return
+        }
+        if (!wrapPidListener(seg)) {
+            Log.e(TAG, "PID: listener not wrapped, segment skipped")
+            return
+        }
+
+        val label = str(seg.context, R.string.pid_button, "PID")
+        try {
+            val add = seg.javaClass.getMethod(
+                "a", Array<String>::class.java, java.lang.Integer.TYPE
+            )
+            val before = inner.childCount
+            add.invoke(seg, arrayOf(label), 0)
+            if (inner.childCount > before) {
+                seg.setTag(pidAddedKey, true)
+                seg.requestLayout()
+                Log.i(TAG, "PID: segment added")
+                return
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "PID: SegmentedLayout.a failed: ${e.message}, using manual view")
+        }
+        if (appendPidSegmentManually(seg, inner, label)) {
+            seg.setTag(pidAddedKey, true)
+            seg.requestLayout()
+            Log.i(TAG, "PID: segment added manually")
+        }
+    }
+
+    private fun wrapPidListener(seg: View): Boolean {
+        if (seg.getTag(pidWrapperKey) != null) return true
+        try {
+            val field = seg.javaClass.getField("c")
+            field.isAccessible = true
+            val current = field.get(seg) ?: return false
+            val listenerClass = field.type
+            val wrapper = java.lang.reflect.Proxy.newProxyInstance(
+                listenerClass.classLoader,
+                arrayOf(listenerClass),
+                pidSegmentHandler(seg, current)
+            )
+            field.set(seg, wrapper)
+            seg.setTag(pidWrapperKey, wrapper)
+            Log.i(TAG, "PID: listener wrapped via field")
+            return true
+        } catch (e: Throwable) {
+            Log.w(TAG, "PID: listener wrap failed: ${e.message}")
+            return seg.getTag(pidWrapperKey) != null
+        }
+    }
+
+    private fun isSearchSegmentedLayout(inner: ViewGroup, context: Context): Boolean {
+        val arrayId = context.resources.getIdentifier(
+            "core_string_illustmanga_novel_user", "array", PIXIV
+        )
+        if (arrayId == 0) return false
+        val expected = context.resources.getStringArray(arrayId)
+        if (expected.size != inner.childCount) return false
+        for (i in expected.indices) {
+            val actual = segmentText(inner, i) ?: return false
+            if (!actual.equals(expected[i], ignoreCase = true)) return false
+        }
+        return true
+    }
+
+    private fun segmentText(inner: ViewGroup, index: Int): String? {
+        val item = inner.getChildAt(index) as? ViewGroup ?: return null
+        return (item.getChildAt(0) as? TextView)?.text?.toString()
+    }
+
+    private fun appendPidSegmentManually(seg: View, inner: ViewGroup, label: String): Boolean {
+        if (inner.childCount == 0) return false
+        val template = inner.getChildAt(0) as? ViewGroup ?: return false
+        val templateText = template.getChildAt(0) as? TextView ?: return false
+        val context = seg.context
+
+        val item = FrameLayout(context)
+        val lp = template.layoutParams
+        item.layoutParams = if (lp is LinearLayout.LayoutParams)
+            LinearLayout.LayoutParams(lp.width, lp.height, lp.weight)
+        else
+            LinearLayout.LayoutParams(lp.width, lp.height)
+        item.setOnClickListener(seg as? View.OnClickListener)
+
+        val text = TextView(context)
+        text.layoutParams = FrameLayout.LayoutParams(WRAP, WRAP).apply {
+            gravity = Gravity.CENTER
+        }
+        text.setPadding(
+            templateText.paddingLeft, templateText.paddingTop,
+            templateText.paddingRight, templateText.paddingBottom
+        )
+        text.setTextSize(TypedValue.COMPLEX_UNIT_PX, templateText.textSize)
+        text.isSingleLine = true
+        text.gravity = Gravity.CENTER
+        text.text = label
+
+        val styleSource = (0 until inner.childCount)
+            .mapNotNull { (inner.getChildAt(it) as? ViewGroup)?.getChildAt(0) as? TextView }
+            .firstOrNull { it.typeface?.isBold != true } ?: templateText
+        text.setTextColor(styleSource.currentTextColor)
+        text.typeface = styleSource.typeface
+
+        item.addView(text)
+        inner.addView(item)
+        return true
+    }
+
+    private fun showPidPage(seg: View) {
+        try {
+            val state = getOrCreatePidPage(seg) ?: return
+            if (state.shown) return
+            (seg.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.hideSoftInputFromWindow(seg.windowToken, 0)
+            seg.rootView.findFocus()?.clearFocus()
+            state.previousIndex = selectedSegmentIndex(seg).coerceIn(0, 2)
+            state.previousVisibilities = IntArray(state.contentViews.size) {
+                state.contentViews[it].visibility
+            }
+            state.contentViews.forEach { it.visibility = View.GONE }
+            state.shown = true
+            state.page.visibility = View.VISIBLE
+        } catch (e: Throwable) {
+            Log.e(TAG, "PID: show page failed: ${e.message}", e)
+        }
+    }
+
+    private fun hidePidPage(seg: View) {
+        try {
+            val state = seg.getTag(pidPageKey) as? PidPageState ?: return
+            if (!state.shown) return
+            state.shown = false
+            state.page.findFocus()?.clearFocus()
+            (seg.context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.hideSoftInputFromWindow(seg.windowToken, 0)
+            state.page.visibility = View.GONE
+            if (state.skipRestore) {
+                // The app already changed the content visibility (e.g. a new search).
+                state.skipRestore = false
+            } else {
+                state.contentViews.forEachIndexed { i, view ->
+                    if (i < state.previousVisibilities.size) {
+                        view.visibility = state.previousVisibilities[i]
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "PID: hide page failed: ${e.message}", e)
+        }
+    }
+
+    private fun selectedSegmentIndex(seg: View): Int {
+        return try {
+            seg.javaClass.getMethod("getCurrentSelectedIndex").invoke(seg) as? Int
+                ?: segmentIndexField(seg)
+        } catch (e: Throwable) {
+            segmentIndexField(seg)
+        }
+    }
+
+    private fun segmentIndexField(seg: View): Int {
+        return try {
+            seg.javaClass.getField("b").getInt(seg)
+        } catch (e: Throwable) {
+            0
+        }
+    }
+
+    private fun setSegmentIndexField(seg: View, index: Int) {
+        try {
+            val field = seg.javaClass.getField("b")
+            field.isAccessible = true
+            field.setInt(seg, index)
+        } catch (e: Throwable) {
+            // getCurrentSelectedIndex hook is the primary mechanism.
+        }
+    }
+
+    private fun exitPidPage(seg: View, state: PidPageState) {
+        if (!state.shown || !seg.isAttachedToWindow) return
+        state.skipRestore = true
+        try {
+            seg.javaClass.getMethod("setSelectedSegment", java.lang.Integer.TYPE)
+                .invoke(seg, state.previousIndex)
+            state.skipRestore = false
+        } catch (e: Throwable) {
+            Log.e(TAG, "PID: exit page failed: ${e.message}", e)
+            hidePidPage(seg)
+            state.skipRestore = false
+        }
+    }
+
+    private fun getOrCreatePidPage(seg: View): PidPageState? {
+        (seg.getTag(pidPageKey) as? PidPageState)?.let { return it }
+        val root = seg.rootView
+        val context = seg.context
+
+        val typeId = idOf(context, "type_fragment_container")
+        val type = if (typeId != 0) root.findViewById<ViewGroup>(typeId) else null
+        val rootGroup = root as? ViewGroup
+        if (type != null && rootGroup != null && type.parent === rootGroup) {
+            val page = buildPidPage(context)
+            val lp = if (rootGroup is LinearLayout)
+                LinearLayout.LayoutParams(MATCH, 0, 1f)
+            else
+                ViewGroup.LayoutParams(MATCH, MATCH)
+            rootGroup.addView(page, lp)
+            Log.i(TAG, "PID: page host=type")
+            return PidPageState(page, listOf(type)).also { seg.setTag(pidPageKey, it) }
+        }
+
+        val contentId = idOf(context, "content_container")
+        val content = if (contentId != 0) root.findViewById<ViewGroup>(contentId) else null
+        if (content != null) {
+            val page = buildPidPage(context)
+            // Keep it at the bottom of the stack; search overlays are hidden in PID mode.
+            content.addView(page, 0, FrameLayout.LayoutParams(MATCH, MATCH))
+            val viewPager = viewById(root, context, "view_pager")
+            val userContainer = viewById(root, context, "search_user_result_fragment_container")
+            val historyContainer = viewById(root, context, "history_fragment_container")
+            val autoCompleteContainer = viewById(root, context, "auto_complete_fragment_container")
+            val tabLayout = viewById(root, context, "tab_layout")
+            val state = PidPageState(
+                page,
+                listOfNotNull(
+                    viewPager, userContainer, historyContainer, autoCompleteContainer, tabLayout
+                )
+            )
+            // If any content overlay comes back (new search, search history, or
+            // autocomplete), leave PID mode instead of covering it.
+            listOfNotNull(
+                viewPager, userContainer, historyContainer, autoCompleteContainer
+            ).forEach { contentView ->
+                contentView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    if (state.shown && contentView.visibility == View.VISIBLE) {
+                        contentView.post { exitPidPage(seg, state) }
+                    }
+                }
+            }
+            seg.setTag(pidPageKey, state)
+            Log.i(TAG, "PID: page host=content")
+            return state
+        }
+
+        Log.e(TAG, "PID: content host not found")
+        return null
+    }
+
+    private fun buildPidPage(context: Context): View {
+        val bg = themeColor(context, android.R.attr.colorBackground, Color.WHITE)
+        val fg = themeColor(context, android.R.attr.textColorPrimary, Color.BLACK)
+        val secondary = themeColor(context, android.R.attr.textColorSecondary, Color.GRAY)
+
+        val scroll = ScrollView(context).apply {
+            isFillViewport = true
+            setBackgroundColor(bg)
+        }
+        val column = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(context, 24), dp(context, 32), dp(context, 24), dp(context, 24))
+        }
+        scroll.addView(column, ViewGroup.LayoutParams(MATCH, WRAP))
+
+        column.addView(TextView(context).apply {
+            text = str(context, R.string.pid_search_title, "PID Search")
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(fg)
+        })
+
+        column.addView(TextView(context).apply {
+            text = str(
+                context,
+                R.string.pid_page_desc,
+                "Enter an illust, novel, or user PID, then choose where to open it."
+            )
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setTextColor(secondary)
+            setPadding(0, dp(context, 8), 0, dp(context, 24))
+        })
+
+        val edit = EditText(context).apply {
+            hint = str(context, R.string.pid_hint, "Enter PID (work/user ID)")
             inputType = InputType.TYPE_CLASS_NUMBER
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            setTextColor(Color.BLACK); setHintTextColor(Color.GRAY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTextColor(fg)
+            setHintTextColor(secondary)
+            isSingleLine = true
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
         }
-        val row = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(activity, 12) }
-        }
-        val b1 = makeBtn(activity, str(activity, R.string.illust, "Illust"))
-        val b2 = makeBtn(activity, str(activity, R.string.novel, "Novel"))
-        val b3 = makeBtn(activity, str(activity, R.string.user, "User"))
-        b1.setOnClickListener { go(activity, editText, ILLUST_ACTIVITY, "ILLUST_ID") }
-        b2.setOnClickListener { go(activity, editText, NOVEL_ACTIVITY, "NOVEL_ID") }
-        b3.setOnClickListener { go(activity, editText, USER_ACTIVITY, "USER_ID") }
-        row.addView(b1); row.addView(b2); row.addView(b3)
-        panel.addView(editText); panel.addView(row)
+        column.addView(edit)
 
-        AlertDialog.Builder(activity)
-            .setTitle(str(activity, R.string.pid_search_title, "PID Search"))
-            .setView(panel)
-            .setNegativeButton(str(activity, R.string.cancel, "Cancel"), null).create().apply {
-                show()
-                getButton(DialogInterface.BUTTON_NEGATIVE)?.setTextColor(Color.GRAY)
-            }
-    }
-
-    private fun go(a: Activity, e: EditText, cls: String, key: String) {
-        val pid = e.text.toString().trim().toLongOrNull()
-        if (pid == null) { toast(a, str(a, R.string.invalid_pid, "Invalid PID")); return }
-        try {
-            a.startActivity(Intent(a, Class.forName(cls, false, a.classLoader)).apply {
-                putExtra(key, pid); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val targets = listOf(
+            Triple(R.string.pid_open_illust, ILLUST_ACTIVITY, "ILLUST_ID"),
+            Triple(R.string.pid_open_novel, NOVEL_ACTIVITY, "NOVEL_ID"),
+            Triple(R.string.pid_open_user, USER_ACTIVITY, "USER_ID")
+        )
+        for ((labelId, cls, key) in targets) {
+            column.addView(Button(context).apply {
+                text = str(context, labelId, "Open")
+                isAllCaps = false
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                layoutParams = LinearLayout.LayoutParams(MATCH, dp(context, 52)).apply {
+                    topMargin = dp(context, 12)
+                }
+                setOnClickListener { launchPid(context, edit, cls, key) }
             })
-        } catch (ex: Exception) {
-            toast(a, str(a, R.string.failed_format, "Failed: %1\$s", ex.message ?: ""))
+        }
+        scroll.visibility = View.GONE
+        return scroll
+    }
+
+    private fun launchPid(context: Context, edit: EditText, cls: String, key: String) {
+        val activity = context.findActivity() ?: return
+        val pid = edit.text.toString().trim().toLongOrNull()
+        if (pid == null || pid <= 0) {
+            toast(activity, str(activity, R.string.invalid_pid, "Invalid PID"))
+            return
+        }
+        try {
+            (activity.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.hideSoftInputFromWindow(edit.windowToken, 0)
+            activity.startActivity(
+                Intent(activity, Class.forName(cls, false, activity.classLoader)).apply {
+                    putExtra(key, pid)
+                }
+            )
+        } catch (e: Throwable) {
+            toast(activity, str(activity, R.string.failed_format, "Failed: %1\$s", e.message ?: ""))
         }
     }
 
-    private fun makeBtn(a: Activity, t: String) = Button(a).apply {
-        text = t; setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        layoutParams = LinearLayout.LayoutParams(0, dp(a, 44), 1f).apply { setMargins(dp(a, 4), 0, dp(a, 4), 0) }
+    private fun themeColor(context: Context, attr: Int, fallback: Int): Int {
+        return try {
+            val value = TypedValue()
+            if (context.theme.resolveAttribute(attr, value, true)) {
+                if (value.resourceId != 0) {
+                    context.resources.getColor(value.resourceId, context.theme)
+                } else {
+                    value.data
+                }
+            } else fallback
+        } catch (e: Throwable) {
+            fallback
+        }
+    }
+
+    private fun idOf(context: Context, name: String): Int =
+        context.resources.getIdentifier(name, "id", PIXIV)
+
+    private fun viewById(root: View, context: Context, name: String): View? {
+        val id = idOf(context, name)
+        return if (id == 0) null else root.findViewById<View>(id)
     }
 
     private fun toast(a: Activity, m: String) { Toast.makeText(a, m, Toast.LENGTH_SHORT).show() }

@@ -8,7 +8,7 @@
 
 - **热门排序无限试用** — 热门度排序搜索的 7 天试用永不过期。
 
-- **PID 查询** — 主界面 Toolbar 注入「PID」按钮，输入 ID 直接跳转到对应插画/小说/用户页面。
+- **PID 查询** — 搜索页顶栏新增「PID」分段，进入独立 PID 搜索页，输入 ID 直接跳转到对应插画/小说/用户页面。
 
 - **作品详情查看** — 长按作品 → 菜单新增「查看详情」。弹窗显示作品名称、作者名称、作品 PID、用户 PID，支持长按复制。
 
@@ -26,8 +26,8 @@
 |---|---|---|
 | 试用天数 | `um9.w()` | DexKit: `core_local_preference_key_first_launch_time_millis` + `86400000L` |
 | AB 实验 | `i23.a()` | DexKit: 字符串 `"] cannot be converted to a boolean."` |
-| PID 按钮 | `MainActivity` Toolbar | View 树遍历查找 Toolbar |
-| 显示设置 | `MainActivity` 侧边栏 | 查找 `NavigationView`，添加菜单项并包装原 listener |
+| PID 查询 | 搜索页 `SegmentedLayout` 顶栏 | 直接类名（DexKit fallback）；Hook `setOnSelectSegmentListener`，追加第 4 个分段并注入 PID 页面 |
+| 显示设置 | `MainActivity` 侧边栏 | 查找 `NavigationView`，添加菜单项并设置点击监听 |
 | 查看详情 | 对话框 builder 的 `create()` | DexKit: `"layout_inflater"` → builder 参数类 → `addInvoke` → builder → `create()` |
 
 所有 Hook 优先使用 DexKit 字节码搜索定位目标方法，失败后回退直接类名。

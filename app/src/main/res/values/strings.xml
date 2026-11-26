@@ -4,6 +4,10 @@
     <string name="pid_button">PID</string>
     <string name="pid_search_title">PID Search</string>
     <string name="pid_hint">Enter PID (work/user ID)</string>
+    <string name="pid_page_desc">Enter an illust, novel, or user PID, then choose where to open it.</string>
+    <string name="pid_open_illust">Open illust</string>
+    <string name="pid_open_novel">Open novel</string>
+    <string name="pid_open_user">Open user</string>
     <string name="illust">Illust</string>
     <string name="novel">Novel</string>
     <string name="user">User</string>
