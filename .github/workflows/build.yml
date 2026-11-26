@@ -23,15 +23,13 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          # The API 37 platform is published as android-37.0, not android-37.
-          packages: 'platforms;android-37.0 build-tools;37.0.0'
+          # Compose 1.13 / Material3 1.5 require compileSdk 37.1.
+          packages: 'platforms;android-37.1 build-tools;37.0.0'
 
-      - name: Ensure API 37 platform alias (fallback)
+      - name: Verify Android SDK platform
         run: |
           SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          if [ -d "$SDK_ROOT/platforms/android-37.0" ] && [ ! -e "$SDK_ROOT/platforms/android-37" ] && [ ! -L "$SDK_ROOT/platforms/android-37" ]; then
-            ln -s "$SDK_ROOT/platforms/android-37.0" "$SDK_ROOT/platforms/android-37"
-          fi
+          test -d "$SDK_ROOT/platforms/android-37.1"
           ls -la "$SDK_ROOT/platforms"
 
       - name: Decode keystore

@@ -562,6 +562,46 @@ class ModuleMain : XposedModule() {
     }
 
     private fun buildPidPage(context: Context): View {
+        return try {
+            val activity = context.findActivity()
+            if (activity == null) {
+                Log.w(TAG, "PID: no activity for Compose page, using legacy")
+                return buildPidLegacyPage(context)
+            }
+            val resources = moduleResources(context)
+            if (resources == null) {
+                Log.w(TAG, "PID: no module resources for Compose page, using legacy")
+                return buildPidLegacyPage(context)
+            }
+            val view = createPidComposeView(
+                activity = activity,
+                hostContext = context,
+                moduleResources = resources,
+                title = str(context, R.string.pid_search_title, "PID Search"),
+                description = str(
+                    context,
+                    R.string.pid_page_desc,
+                    "Enter an illust, novel, or user PID, then choose where to open it."
+                ),
+                hint = str(context, R.string.pid_hint, "Enter PID (work/user ID)"),
+                illustLabel = str(context, R.string.pid_open_illust, "Open illust"),
+                novelLabel = str(context, R.string.pid_open_novel, "Open novel"),
+                userLabel = str(context, R.string.pid_open_user, "Open user"),
+                onOpenIllust = { pid -> openPid(activity, pid, ILLUST_ACTIVITY, "ILLUST_ID") },
+                onOpenNovel = { pid -> openPid(activity, pid, NOVEL_ACTIVITY, "NOVEL_ID") },
+                onOpenUser = { pid -> openPid(activity, pid, USER_ACTIVITY, "USER_ID") },
+                onInvalid = { toast(activity, str(activity, R.string.invalid_pid, "Invalid PID")) }
+            )
+            view.visibility = View.GONE
+            Log.i(TAG, "PID: Compose page created")
+            view
+        } catch (e: Throwable) {
+            Log.e(TAG, "PID: Compose page failed, fallback to legacy", e)
+            buildPidLegacyPage(context)
+        }
+    }
+
+    private fun buildPidLegacyPage(context: Context): View {
         val bg = themeColor(context, android.R.attr.colorBackground, Color.WHITE)
         val fg = themeColor(context, android.R.attr.textColorPrimary, Color.BLACK)
         val secondary = themeColor(context, android.R.attr.textColorSecondary, Color.GRAY)
@@ -635,6 +675,18 @@ class ModuleMain : XposedModule() {
         try {
             (activity.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
                 ?.hideSoftInputFromWindow(edit.windowToken, 0)
+            activity.startActivity(
+                Intent(activity, Class.forName(cls, false, activity.classLoader)).apply {
+                    putExtra(key, pid)
+                }
+            )
+        } catch (e: Throwable) {
+            toast(activity, str(activity, R.string.failed_format, "Failed: %1\$s", e.message ?: ""))
+        }
+    }
+
+    private fun openPid(activity: Activity, pid: Long, cls: String, key: String) {
+        try {
             activity.startActivity(
                 Intent(activity, Class.forName(cls, false, activity.classLoader)).apply {
                     putExtra(key, pid)
