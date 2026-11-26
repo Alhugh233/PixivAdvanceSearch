@@ -182,6 +182,15 @@ fun createPidComposeView(
     val moduleContext = ModuleComposeContext(hostContext, moduleResources)
     val owner = HostComposeOwner(activity)
 
+    // Compose 1.13 resolves its window recomposer from the top of the host view
+    // tree. Tag the host decor view with the module-owned lifecycle/savedstate
+    // owners so the module classloader can find them.
+    activity.window?.decorView?.let { root ->
+        root.setViewTreeLifecycleOwner(owner)
+        root.setViewTreeSavedStateRegistryOwner(owner)
+        root.setViewTreeViewModelStoreOwner(owner)
+    }
+
     android.util.Log.i(
         "PixivAdvanceSearch",
         "PID: ComposeView classloader=${ComposeView::class.java.classLoader}"
