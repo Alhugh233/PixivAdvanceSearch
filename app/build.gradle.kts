@@ -19,7 +19,6 @@ android {
         targetSdk = 34
         versionCode = 4
         versionName = "1.3"
-        multiDexEnabled = true
     }
 
     signingConfigs {
