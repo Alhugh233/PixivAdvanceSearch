@@ -578,49 +578,6 @@ class ModuleMain : XposedModule() {
 
     private fun installDisplaySetting(classLoader: ClassLoader) {
         try {
-            val navClass = classLoader.loadClass(
-                "com.google.android.material.navigation.NavigationView")
-            val setter = navClass.declaredMethods.firstOrNull {
-                it.name == "setNavigationItemSelectedListener" && it.parameterTypes.size == 1
-            } ?: run {
-                Log.e(TAG, "Display: NavigationView setter not found")
-                return
-            }
-            val listenerClass = setter.parameterTypes[0]
-
-            hook(setter).intercept { chain ->
-                val nav = chain.thisObject as View
-                val original = chain.getArg(0)
-                val wrapper = java.lang.reflect.Proxy.newProxyInstance(
-                    listenerClass.classLoader,
-                    arrayOf(listenerClass),
-                    java.lang.reflect.InvocationHandler { proxy, method, args ->
-                        when (method.name) {
-                            "onNavigationItemSelected" -> {
-                                val item = args?.getOrNull(0) as? MenuItem
-                                if (item?.itemId == DISPLAY_SETTINGS_MENU_ID) {
-                                    openViewingSettings(nav.context)
-                                    true
-                                } else if (original != null) {
-                                    method.invoke(original, item)
-                                } else {
-                                    false
-                                }
-                            }
-                            "equals" -> proxy === args?.getOrNull(0)
-                            "hashCode" -> System.identityHashCode(proxy)
-                            "toString" -> "DisplaySettingsNavigationListener"
-                            else -> null
-                        }
-                    }
-                )
-                chain.proceed(arrayOf<Any>(wrapper))
-                val activity = nav.context.findActivity()
-                if (activity != null && activity.javaClass.name == MAIN_ACTIVITY) {
-                    addDisplayMenuItem(activity, nav)
-                }
-            }
-
             val mainClass = classLoader.loadClass(MAIN_ACTIVITY)
             val onCreate = mainClass.getDeclaredMethod("onCreate", android.os.Bundle::class.java)
             hook(onCreate).setPriority(PRIORITY_LOWEST).intercept { chain ->
@@ -633,7 +590,7 @@ class ModuleMain : XposedModule() {
                     addDisplayMenuItem(activity, nav)
                 }
             }
-            Log.i(TAG, "Display: sidebar hooks installed")
+            Log.i(TAG, "Display: sidebar item hook installed")
         } catch (e: Throwable) {
             Log.e(TAG, "Display hook FAILED: ${e.message}", e)
         }
@@ -662,10 +619,30 @@ class ModuleMain : XposedModule() {
                 str(activity, R.string.display_settings, "Display settings")
             )
             item.setIcon(android.R.drawable.ic_menu_preferences)
+            item.setOnMenuItemClickListener {
+                openViewingSettings(activity)
+                closeDrawer(nav)
+                true
+            }
             nav.invalidate()
             Log.i(TAG, "Display: sidebar item added")
         } catch (e: Throwable) {
             Log.e(TAG, "Display: add sidebar item failed: ${e.message}", e)
+        }
+    }
+
+    private fun closeDrawer(nav: View) {
+        var parent = nav.parent
+        while (parent != null) {
+            if (parent.javaClass.name == "androidx.drawerlayout.widget.DrawerLayout") {
+                try {
+                    parent.javaClass.getMethod("closeDrawers").invoke(parent)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "close drawer failed: ${e.message}", e)
+                }
+                return
+            }
+            parent = (parent as? View)?.parent
         }
     }
 
