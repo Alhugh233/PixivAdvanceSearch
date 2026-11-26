@@ -49,14 +49,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.ViewTreeLifecycleOwner
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.ViewTreeViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
-import androidx.savedstate.ViewTreeSavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 
 private val PidLightColors = lightColorScheme(
     primary = Color(0xFF00639B),
@@ -189,9 +189,9 @@ fun createPidComposeView(
 
     return ComposeView(moduleContext).apply {
         setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-        ViewTreeLifecycleOwner.set(this, owner)
-        ViewTreeSavedStateRegistryOwner.set(this, owner)
-        ViewTreeViewModelStoreOwner.set(this, owner)
+        setViewTreeLifecycleOwner(owner)
+        setViewTreeSavedStateRegistryOwner(owner)
+        setViewTreeViewModelStoreOwner(owner)
         setContent {
             CompositionLocalProvider(
                 LocalContext provides moduleContext,
