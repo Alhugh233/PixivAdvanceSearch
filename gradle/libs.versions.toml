@@ -1,13 +1,16 @@
 [versions]
-agp = "9.5.1"
-kotlin = "2.2.10"
+agp = "9.5.3"
+kotlin = "2.4.21"
 composeBom = "2026.11.01"
-lifecycle = "2.10.0"
-coreKtx = "1.20.0-alpha01"
-appcompat = "1.8.0-alpha01"
+lifecycle = "2.11.1"
+savedstate = "1.5.0"
+coreKtx = "1.19.1"
+appcompat = "1.8.0"
 material = "1.14.0"
 constraintlayout = "2.2.2"
 hiddenApiBypass = "6.2"
+libxposed = "102.0.0"
+dexkit = "2.3.0"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -21,9 +24,12 @@ compose-foundation = { group = "androidx.compose.foundation", name = "foundation
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
-androidx-savedstate-ktx = { group = "androidx.savedstate", name = "savedstate-ktx", version = "1.5.0" }
+androidx-savedstate-ktx = { group = "androidx.savedstate", name = "savedstate-ktx", version.ref = "savedstate" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
 hiddenapibypass = { module = "org.lsposed.hiddenapibypass:hiddenapibypass", version.ref = "hiddenApiBypass" }
+libxposed-api = { module = "io.github.libxposed:api", version.ref = "libxposed" }
+libxposed-service = { module = "io.github.libxposed:service", version.ref = "libxposed" }
+dexkit = { module = "org.luckypray:dexkit", version.ref = "dexkit" }
