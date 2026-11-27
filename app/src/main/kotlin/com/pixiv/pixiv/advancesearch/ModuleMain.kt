@@ -49,6 +49,8 @@ class ModuleMain : XposedModule() {
         private const val DISPLAY_SETTINGS_MENU_ID = 0x4D4F4455
         private const val SEARCH_SEGMENT_CLASS =
             "jp.pxv.android.feature.component.androidview.segmentedcontrol.SegmentedLayout"
+        private const val SEARCH_RESULT_ACTIVITY =
+            "jp.pxv.android.feature.search.searchresult.SearchResultActivity"
         private const val PID_SEGMENT_INDEX = 3
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -294,6 +296,12 @@ class ModuleMain : XposedModule() {
 
     private fun ensurePidSegment(seg: View) {
         if (!seg.isAttachedToWindow) return
+        // The search-result screen has its own 3-segment layout. PID search belongs
+        // to the main search tab only, so do not touch that screen.
+        if (seg.context.findActivity()?.javaClass?.name == SEARCH_RESULT_ACTIVITY) {
+            Log.i(TAG, "PID: skip SearchResultActivity segment")
+            return
+        }
         val inner = (seg as? ViewGroup)?.getChildAt(0) as? ViewGroup ?: return
         if (inner.childCount != 3) return
         if (!isSearchSegmentedLayout(inner, seg.context)) {
