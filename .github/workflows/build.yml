@@ -46,8 +46,18 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: ./gradlew --no-daemon assembleRelease
 
+      - name: Prepare APK
+        run: |
+          APK_PATH="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$APK_PATH"
+          cp "$APK_PATH" PixivAdvanceSearch.apk
+          ls -lh PixivAdvanceSearch.apk
+
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: PixivAdvanceSearch
-          path: app/build/outputs/apk/release/*.apk
+          # v7 supports non-zipped single-file artifacts.
+          # The artifact name becomes the file name; `name` is ignored.
+          path: PixivAdvanceSearch.apk
+          archive: false
+          if-no-files-found: error
