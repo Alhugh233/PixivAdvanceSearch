@@ -10,6 +10,8 @@ import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.text.InputType
 import android.util.Log
@@ -55,6 +57,10 @@ class ModuleMain : XposedModule() {
             "jp.pxv.android.feature.component.androidview.segmentedcontrol.SegmentedLayout"
         private const val SEARCH_RESULT_ACTIVITY =
             "jp.pxv.android.feature.search.searchresult.SearchResultActivity"
+        private const val THUMBNAIL_VIEW =
+            "jp.pxv.android.feature.commonlist.view.ThumbnailView"
+        private const val ILLUST_MODEL = "defpackage.ub7"
+        private const val RANKING_ITEM = "defpackage.w64"
         private const val PID_SEGMENT_INDEX = 3
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -102,6 +108,9 @@ class ModuleMain : XposedModule() {
 
         // PID search — direct class name first, DexKit fallback if it changes.
         installPidSegment(cl, bridge)
+
+        // R18 / R18G / AI-generated badges on illust covers.
+        installSpecialBadge(cl)
 
         if (bridge != null && bridge.isValid) {
             installTrialHook(bridge, cl)
@@ -253,6 +262,141 @@ class ModuleMain : XposedModule() {
             Log.i(TAG, "PID: segment hook installed")
         } catch (e: Throwable) {
             Log.e(TAG, "PID hook FAILED: ${e.message}", e)
+        }
+    }
+
+    // ================================================================
+    // Special badges — R18 / R18G / AI-generated on illust covers
+    // ================================================================
+
+    private fun installSpecialBadge(classLoader: ClassLoader) {
+        try {
+            val thumbClass = classLoader.loadClass(THUMBNAIL_VIEW)
+            val modelClass = classLoader.loadClass(ILLUST_MODEL)
+            val bind = thumbClass.getDeclaredMethod(
+                "d",
+                modelClass,
+                java.lang.Boolean.TYPE,
+                Integer::class.java
+            )
+            hook(bind).intercept { chain ->
+                val result = chain.proceed()
+                try {
+                    updateSpecialBadge(chain.thisObject as? View, chain.getArg(0))
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Badge: thumbnail update failed: ${e.message}")
+                }
+                result
+            }
+            Log.i(TAG, "Badge: ThumbnailView hook installed")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Badge: ThumbnailView hook failed", e)
+        }
+
+        try {
+            val itemClass = classLoader.loadClass(RANKING_ITEM)
+            val bind = itemClass.getDeclaredMethod("a")
+            hook(bind).intercept { chain ->
+                val result = chain.proceed()
+                try {
+                    val item = chain.thisObject
+                    val view = itemClass.getField("c").get(item) as? View
+                    val model = itemClass.getField("d").get(item)
+                    updateSpecialBadge(view, model)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Badge: ranking update failed: ${e.message}")
+                }
+                result
+            }
+            Log.i(TAG, "Badge: ranking hook installed")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Badge: ranking hook failed", e)
+        }
+    }
+
+    private fun updateSpecialBadge(view: View?, model: Any?) {
+        if (view == null || model == null) return
+        val restrict = readModelInt(model, "B0", "q") ?: 0
+        val aiType = readModelInt(model, null, "x") ?: 0
+        val labels = ArrayList<String>(2)
+        when (restrict) {
+            1 -> labels += "R18"
+            2 -> labels += "R18G"
+        }
+        if (aiType == 2) labels += "AI"
+
+        val existing = view.getTag(R.id.special_badge_tag) as? LinearLayout
+        if (labels.isEmpty()) {
+            existing?.visibility = View.GONE
+            return
+        }
+        val container = existing ?: run {
+            if (view !is ViewGroup) return
+            LinearLayout(view.context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.BOTTOM or Gravity.START
+                isClickable = false
+                isFocusable = false
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                layoutParams = FrameLayout.LayoutParams(
+                    WRAP,
+                    WRAP,
+                    Gravity.BOTTOM or Gravity.START
+                ).apply {
+                    leftMargin = dp(view.context, 6)
+                    bottomMargin = dp(view.context, 6)
+                }
+            }.also {
+                view.addView(it)
+                view.setTag(R.id.special_badge_tag, it)
+            }
+        }
+
+        container.removeAllViews()
+        labels.forEach { label -> container.addView(makeSpecialBadge(view.context, label)) }
+        container.visibility = View.VISIBLE
+        container.bringToFront()
+    }
+
+    private fun readModelInt(model: Any, methodName: String?, fieldName: String?): Int? {
+        if (methodName != null) {
+            try {
+                val method = model.javaClass.getMethod(methodName)
+                (method.invoke(model) as? Int)?.let { return it }
+            } catch (_: Throwable) {
+            }
+        }
+        if (fieldName != null) {
+            try {
+                return model.javaClass.getField(fieldName).getInt(model)
+            } catch (_: Throwable) {
+            }
+        }
+        return null
+    }
+
+    private fun makeSpecialBadge(context: Context, label: String): TextView {
+        val color = when (label) {
+            "R18" -> 0xFFE53935.toInt()
+            "R18G" -> 0xFF8E24AA.toInt()
+            else -> 0xFF1E88E5.toInt()
+        }
+        return TextView(context).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(context, 5), dp(context, 2), dp(context, 5), dp(context, 2))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(context, 4).toFloat()
+                setColor(color)
+            }
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply {
+                marginEnd = dp(context, 4)
+            }
         }
     }
 

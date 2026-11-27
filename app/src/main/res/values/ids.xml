@@ -3,4 +3,5 @@
     <item name="pid_page_tag" type="id" />
     <item name="pid_added_tag" type="id" />
     <item name="pid_wrapper_tag" type="id" />
+    <item name="special_badge_tag" type="id" />
 </resources>
