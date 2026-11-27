@@ -23,8 +23,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
         with:
           # Caches Gradle User Home, wrapper distribution and the local build cache.
+          # Enhanced caching is free for public repositories and deduplicates entries.
           # Do not enable setup-java's `cache: gradle` at the same time.
-          cache-provider: basic
+          cache-provider: enhanced
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
