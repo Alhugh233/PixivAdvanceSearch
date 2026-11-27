@@ -46,6 +46,10 @@ class ModuleMain : XposedModule() {
         private const val ILLUST_ACTIVITY = "jp.pxv.android.feature.illustviewer.detail.IllustDetailSingleActivity"
         private const val NOVEL_ACTIVITY = "jp.pxv.android.feature.novelviewer.noveltext.NovelTextActivity"
         private const val USER_ACTIVITY = "jp.pxv.android.feature.userprofile.activity.UserProfileActivity"
+        private const val ILLUST_SERIES_ACTIVITY =
+            "jp.pxv.android.feature.illustseriesdetail.IllustSeriesDetailActivity"
+        private const val NOVEL_SERIES_ACTIVITY =
+            "jp.pxv.android.feature.novelseriesdetail.NovelSeriesDetailActivity"
         private const val DISPLAY_SETTINGS_MENU_ID = 0x4D4F4455
         private const val SEARCH_SEGMENT_CLASS =
             "jp.pxv.android.feature.component.androidview.segmentedcontrol.SegmentedLayout"
@@ -585,19 +589,50 @@ class ModuleMain : XposedModule() {
                 activity = activity,
                 hostContext = context,
                 moduleResources = resources,
-                title = str(context, R.string.pid_search_title, "PID Search"),
-                description = str(
-                    context,
-                    R.string.pid_page_desc,
-                    "Enter an illust, novel, or user PID, then choose where to open it."
+                strings = PidUiStrings(
+                    title = str(context, R.string.pid_search_title, "PID Search"),
+                    description = str(
+                        context,
+                        R.string.pid_page_desc,
+                        "Search a PID across illust/manga, novel, user, and series."
+                    ),
+                    hint = str(context, R.string.pid_hint, "Enter PID (work/user/series ID)"),
+                    search = str(context, R.string.pid_search_action, "Search"),
+                    searching = str(context, R.string.pid_searching, "Searching…"),
+                    empty = str(
+                        context,
+                        R.string.pid_search_empty,
+                        "No matching PID found."
+                    ),
+                    failed = str(
+                        context,
+                        R.string.pid_search_failed,
+                        "Search failed: %1\$s"
+                    ),
+                    fallbackHint = str(
+                        context,
+                        R.string.pid_fallback_hint,
+                        "You can still open a type directly:"
+                    ),
+                    typeIllust = str(
+                        context,
+                        R.string.pid_type_illust,
+                        "Illust / Manga"
+                    ),
+                    typeNovel = str(context, R.string.pid_type_novel, "Novel"),
+                    typeUser = str(context, R.string.pid_type_user, "User"),
+                    typeIllustSeries = str(
+                        context,
+                        R.string.pid_type_illust_series,
+                        "Manga series"
+                    ),
+                    typeNovelSeries = str(
+                        context,
+                        R.string.pid_type_novel_series,
+                        "Novel series"
+                    )
                 ),
-                hint = str(context, R.string.pid_hint, "Enter PID (work/user ID)"),
-                illustLabel = str(context, R.string.pid_open_illust, "Open illust"),
-                novelLabel = str(context, R.string.pid_open_novel, "Open novel"),
-                userLabel = str(context, R.string.pid_open_user, "Open user"),
-                onOpenIllust = { pid -> openPid(activity, pid, ILLUST_ACTIVITY, "ILLUST_ID") },
-                onOpenNovel = { pid -> openPid(activity, pid, NOVEL_ACTIVITY, "NOVEL_ID") },
-                onOpenUser = { pid -> openPid(activity, pid, USER_ACTIVITY, "USER_ID") },
+                onOpen = { target, pid, userId -> openPidTarget(activity, target, pid, userId) },
                 onInvalid = { toast(activity, str(activity, R.string.invalid_pid, "Invalid PID")) }
             )
             view.visibility = View.GONE
@@ -635,7 +670,7 @@ class ModuleMain : XposedModule() {
             text = str(
                 context,
                 R.string.pid_page_desc,
-                "Enter an illust, novel, or user PID, then choose where to open it."
+                "Search a PID across illust/manga works, novels, users, and series."
             )
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             setTextColor(secondary)
@@ -643,7 +678,7 @@ class ModuleMain : XposedModule() {
         })
 
         val edit = EditText(context).apply {
-            hint = str(context, R.string.pid_hint, "Enter PID (work/user ID)")
+            hint = str(context, R.string.pid_hint, "Enter PID (work/user/series ID)")
             inputType = InputType.TYPE_CLASS_NUMBER
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setTextColor(fg)
@@ -656,7 +691,17 @@ class ModuleMain : XposedModule() {
         val targets = listOf(
             Triple(R.string.pid_open_illust, ILLUST_ACTIVITY, "ILLUST_ID"),
             Triple(R.string.pid_open_novel, NOVEL_ACTIVITY, "NOVEL_ID"),
-            Triple(R.string.pid_open_user, USER_ACTIVITY, "USER_ID")
+            Triple(R.string.pid_open_user, USER_ACTIVITY, "USER_ID"),
+            Triple(
+                R.string.pid_type_illust_series,
+                ILLUST_SERIES_ACTIVITY,
+                "ILLUST_SERIES_ID"
+            ),
+            Triple(
+                R.string.pid_type_novel_series,
+                NOVEL_SERIES_ACTIVITY,
+                "NOVEL_SERIES_ID"
+            )
         )
         for ((labelId, cls, key) in targets) {
             column.addView(Button(context).apply {
@@ -686,6 +731,35 @@ class ModuleMain : XposedModule() {
             activity.startActivity(
                 Intent(activity, Class.forName(cls, false, activity.classLoader)).apply {
                     putExtra(key, pid)
+                }
+            )
+        } catch (e: Throwable) {
+            toast(activity, str(activity, R.string.failed_format, "Failed: %1\$s", e.message ?: ""))
+        }
+    }
+
+    private fun openPidTarget(activity: Activity, target: PidTarget, pid: Long, userId: Long?) {
+        when (target) {
+            PidTarget.ILLUST -> openPid(activity, pid, ILLUST_ACTIVITY, "ILLUST_ID")
+            PidTarget.NOVEL -> openPid(activity, pid, NOVEL_ACTIVITY, "NOVEL_ID")
+            PidTarget.USER -> openPid(activity, pid, USER_ACTIVITY, "USER_ID")
+            PidTarget.ILLUST_SERIES ->
+                openPid(activity, pid, ILLUST_SERIES_ACTIVITY, "ILLUST_SERIES_ID")
+            PidTarget.NOVEL_SERIES -> openNovelSeries(activity, pid, userId)
+        }
+    }
+
+    private fun openNovelSeries(activity: Activity, seriesId: Long, userId: Long?) {
+        try {
+            activity.startActivity(
+                Intent(
+                    activity,
+                    Class.forName(NOVEL_SERIES_ACTIVITY, false, activity.classLoader)
+                ).apply {
+                    putExtra("NOVEL_SERIES_ID", seriesId)
+                    if (userId != null && userId > 0L) {
+                        putExtra("NOVEL_SERIES_USER_ID", userId)
+                    }
                 }
             )
         } catch (e: Throwable) {

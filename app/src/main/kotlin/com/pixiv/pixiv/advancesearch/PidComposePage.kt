@@ -6,25 +6,31 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Resources
 import android.os.Bundle
-import androidx.compose.foundation.clickable
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ListItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MotionScheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Surface
@@ -44,7 +50,9 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -57,6 +65,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import java.util.Locale
 
 private val PidLightColors = lightColorScheme(
     primary = Color(0xFF00639B),
@@ -92,6 +101,22 @@ private val PidShapes = Shapes(
     medium = RoundedCornerShape(16.dp),
     large = RoundedCornerShape(24.dp),
     extraLarge = RoundedCornerShape(32.dp)
+)
+
+internal data class PidUiStrings(
+    val title: String,
+    val description: String,
+    val hint: String,
+    val search: String,
+    val searching: String,
+    val empty: String,
+    val failed: String,
+    val fallbackHint: String,
+    val typeIllust: String,
+    val typeNovel: String,
+    val typeUser: String,
+    val typeIllustSeries: String,
+    val typeNovelSeries: String
 )
 
 private class ModuleComposeContext(
@@ -164,19 +189,12 @@ private class HostComposeOwner(private val activity: Activity) :
     }
 }
 
-fun createPidComposeView(
+internal fun createPidComposeView(
     activity: Activity,
     hostContext: Context,
     moduleResources: Resources,
-    title: String,
-    description: String,
-    hint: String,
-    illustLabel: String,
-    novelLabel: String,
-    userLabel: String,
-    onOpenIllust: (Long) -> Unit,
-    onOpenNovel: (Long) -> Unit,
-    onOpenUser: (Long) -> Unit,
+    strings: PidUiStrings,
+    onOpen: (PidTarget, Long, Long?) -> Unit,
     onInvalid: () -> Unit
 ): ComposeView {
     val moduleContext = ModuleComposeContext(hostContext, moduleResources)
@@ -208,15 +226,9 @@ fun createPidComposeView(
             ) {
                 PidComposeTheme {
                     PidScreen(
-                        title = title,
-                        description = description,
-                        hint = hint,
-                        illustLabel = illustLabel,
-                        novelLabel = novelLabel,
-                        userLabel = userLabel,
-                        onOpenIllust = onOpenIllust,
-                        onOpenNovel = onOpenNovel,
-                        onOpenUser = onOpenUser,
+                        strings = strings,
+                        searchContext = moduleContext,
+                        onOpen = onOpen,
                         onInvalid = onInvalid
                     )
                 }
@@ -238,26 +250,41 @@ private fun PidComposeTheme(content: @Composable () -> Unit) {
 
 @Composable
 private fun PidScreen(
-    title: String,
-    description: String,
-    hint: String,
-    illustLabel: String,
-    novelLabel: String,
-    userLabel: String,
-    onOpenIllust: (Long) -> Unit,
-    onOpenNovel: (Long) -> Unit,
-    onOpenUser: (Long) -> Unit,
+    strings: PidUiStrings,
+    searchContext: Context,
+    onOpen: (PidTarget, Long, Long?) -> Unit,
     onInvalid: () -> Unit
 ) {
     var pid by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var searched by remember { mutableStateOf(false) }
+    var results by remember { mutableStateOf<List<PidSearchResult>>(emptyList()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val handler = remember { Handler(Looper.getMainLooper()) }
 
-    fun open(target: (Long) -> Unit) {
+    fun search() {
         val value = pid.trim().toLongOrNull()
         if (value == null || value <= 0L) {
             onInvalid()
-        } else {
-            target(value)
+            return
         }
+        if (loading) return
+        loading = true
+        searched = false
+        error = null
+        results = emptyList()
+        Thread {
+            val outcome = runCatching { PidSearchClient.search(searchContext, value) }
+            handler.post {
+                loading = false
+                searched = true
+                outcome.onSuccess { results = it }
+                    .onFailure {
+                        android.util.Log.e("PixivAdvanceSearch", "PID search failed", it)
+                        error = it.message ?: it.javaClass.simpleName
+                    }
+            }
+        }.start()
     }
 
     Surface(
@@ -271,13 +298,13 @@ private fun PidScreen(
                 .padding(horizontal = 24.dp, vertical = 28.dp)
         ) {
             Text(
-                text = title,
+                text = strings.title,
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = description,
+                text = strings.description,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -285,45 +312,162 @@ private fun PidScreen(
             OutlinedTextField(
                 value = pid,
                 onValueChange = { input -> pid = input.filter { it.isDigit() } },
-                label = { Text(hint) },
+                label = { Text(strings.hint) },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Search
+                ),
+                keyboardActions = KeyboardActions(onSearch = { search() }),
                 shape = MaterialTheme.shapes.large,
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(24.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { search() },
+                enabled = !loading,
                 shape = MaterialTheme.shapes.large,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
             ) {
-                PidAction(illustLabel) { open(onOpenIllust) }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
-                PidAction(novelLabel) { open(onOpenNovel) }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
-                PidAction(userLabel) { open(onOpenUser) }
+                if (loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(strings.searching)
+                } else {
+                    Text(strings.search)
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+
+            val currentError = error
+            val pidValue = pid.trim().toLongOrNull()
+            if (currentError != null) {
+                Text(
+                    text = String.format(Locale.getDefault(), strings.failed, currentError),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = strings.fallbackHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                if (pidValue != null && pidValue > 0L) {
+                    PidFallbackButtons(pidValue, strings, onOpen)
+                }
+            } else if (searched && !loading && results.isEmpty()) {
+                Text(
+                    text = strings.empty,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = strings.fallbackHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                if (pidValue != null && pidValue > 0L) {
+                    PidFallbackButtons(pidValue, strings, onOpen)
+                }
+            } else {
+                results.forEach { result ->
+                    PidResultCard(result, strings, onOpen)
+                    Spacer(Modifier.height(10.dp))
+                }
             }
         }
     }
 }
 
 @Composable
-private fun PidAction(label: String, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = {
-            Text(text = label, style = MaterialTheme.typography.titleMedium)
-        },
-        trailingContent = {
+private fun PidResultCard(
+    result: PidSearchResult,
+    strings: PidUiStrings,
+    onOpen: (PidTarget, Long, Long?) -> Unit
+) {
+    Card(
+        onClick = { onOpen(result.target, result.id, result.userId) },
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(16.dp)) {
             Text(
-                text = "›",
-                style = MaterialTheme.typography.headlineSmall,
+                text = targetLabel(result.target, strings),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = result.title.ifBlank { "PID ${result.id}" },
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (result.subtitle.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = result.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "PID ${result.id}",
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-        },
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
+        }
+    }
+}
+
+@Composable
+private fun PidFallbackButtons(
+    pid: Long,
+    strings: PidUiStrings,
+    onOpen: (PidTarget, Long, Long?) -> Unit
+) {
+    val targets = listOf(
+        PidTarget.ILLUST to strings.typeIllust,
+        PidTarget.NOVEL to strings.typeNovel,
+        PidTarget.USER to strings.typeUser,
+        PidTarget.ILLUST_SERIES to strings.typeIllustSeries,
+        PidTarget.NOVEL_SERIES to strings.typeNovelSeries
     )
+    targets.forEach { (target, label) ->
+        OutlinedButton(
+            onClick = { onOpen(target, pid, null) },
+            shape = MaterialTheme.shapes.large,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+        ) {
+            Text(label)
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+private fun targetLabel(target: PidTarget, strings: PidUiStrings): String = when (target) {
+    PidTarget.ILLUST -> strings.typeIllust
+    PidTarget.NOVEL -> strings.typeNovel
+    PidTarget.USER -> strings.typeUser
+    PidTarget.ILLUST_SERIES -> strings.typeIllustSeries
+    PidTarget.NOVEL_SERIES -> strings.typeNovelSeries
 }
