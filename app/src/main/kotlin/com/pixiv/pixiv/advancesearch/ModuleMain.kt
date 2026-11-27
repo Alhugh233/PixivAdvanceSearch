@@ -61,6 +61,8 @@ class ModuleMain : XposedModule() {
             "jp.pxv.android.feature.commonlist.view.ThumbnailView"
         private const val ILLUST_MODEL = "defpackage.ub7"
         private const val RANKING_ITEM = "defpackage.w64"
+        private const val ILLUST_CARD_ITEM_VIEW =
+            "jp.pxv.android.feature.ranking.common.IllustCardItemView"
         private const val PID_SEGMENT_INDEX = 3
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -110,7 +112,7 @@ class ModuleMain : XposedModule() {
         installPidSegment(cl, bridge)
 
         // R18 / R18G / AI-generated badges on illust covers.
-        installSpecialBadge(cl)
+        installSpecialBadge(cl, bridge)
 
         if (bridge != null && bridge.isValid) {
             installTrialHook(bridge, cl)
@@ -269,55 +271,186 @@ class ModuleMain : XposedModule() {
     // Special badges — R18 / R18G / AI-generated on illust covers
     // ================================================================
 
-    private fun installSpecialBadge(classLoader: ClassLoader) {
-        try {
+    private data class ThumbnailBind(
+        val method: Method,
+        val modelClass: Class<*>,
+        val methodName: String
+    )
+
+    private data class RankingBind(
+        val itemClass: Class<*>,
+        val method: Method,
+        val viewField: String,
+        val modelField: String
+    )
+
+    private fun installSpecialBadge(classLoader: ClassLoader, bridge: DexKitBridge?) {
+        val thumbnail = resolveThumbnailBind(classLoader, bridge)
+        if (thumbnail == null) {
+            Log.e(TAG, "Badge: ThumbnailView bind not found")
+        } else {
+            try {
+                hook(thumbnail.method).intercept { chain ->
+                    val result = chain.proceed()
+                    try {
+                        updateSpecialBadge(chain.thisObject as? View, chain.getArg(0))
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "Badge: thumbnail update failed: ${e.message}")
+                    }
+                    result
+                }
+                Log.i(
+                    TAG,
+                    "Badge: ThumbnailView hook installed " +
+                        "(${thumbnail.methodName}, model=${thumbnail.modelClass.name})"
+                )
+            } catch (e: Throwable) {
+                Log.e(TAG, "Badge: ThumbnailView hook failed", e)
+            }
+        }
+
+        val ranking = resolveRankingBind(classLoader, bridge, thumbnail?.modelClass)
+        if (ranking == null) {
+            Log.e(TAG, "Badge: ranking bind not found")
+        } else {
+            try {
+                hook(ranking.method).intercept { chain ->
+                    val result = chain.proceed()
+                    try {
+                        val item = chain.thisObject
+                        val view = ranking.itemClass
+                            .getDeclaredField(ranking.viewField)
+                            .apply { isAccessible = true }
+                            .get(item) as? View
+                        val model = ranking.itemClass
+                            .getDeclaredField(ranking.modelField)
+                            .apply { isAccessible = true }
+                            .get(item)
+                        updateSpecialBadge(view, model)
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "Badge: ranking update failed: ${e.message}")
+                    }
+                    result
+                }
+                Log.i(
+                    TAG,
+                    "Badge: ranking hook installed " +
+                        "(${ranking.itemClass.name}.${ranking.method.name}, " +
+                        "view=${ranking.viewField}, model=${ranking.modelField})"
+                )
+            } catch (e: Throwable) {
+                Log.e(TAG, "Badge: ranking hook failed", e)
+            }
+        }
+    }
+
+    private fun resolveThumbnailBind(
+        classLoader: ClassLoader,
+        bridge: DexKitBridge?
+    ): ThumbnailBind? {
+        if (bridge != null && bridge.isValid) {
+            try {
+                val results = bridge.findMethod {
+                    matcher {
+                        declaredClass = THUMBNAIL_VIEW
+                        paramCount = 3
+                    }
+                }
+                for (result in results) {
+                    val types = result.paramTypeNames
+                    if (types.size != 3) continue
+                    if (!isBooleanType(types[1]) || !isIntegerType(types[2])) continue
+                    val modelClass = runCatching {
+                        classLoader.loadClass(types[0])
+                    }.getOrNull() ?: continue
+                    val method = runCatching {
+                        result.getMethodInstance(classLoader)
+                    }.getOrNull() ?: continue
+                    return ThumbnailBind(method, modelClass, result.methodName)
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Badge: DexKit ThumbnailView search failed: ${e.message}")
+            }
+        }
+
+        return try {
             val thumbClass = classLoader.loadClass(THUMBNAIL_VIEW)
             val modelClass = classLoader.loadClass(ILLUST_MODEL)
-            val bind = thumbClass.getDeclaredMethod(
+            val method = thumbClass.getDeclaredMethod(
                 "d",
                 modelClass,
                 java.lang.Boolean.TYPE,
                 Integer::class.java
             )
-            hook(bind).intercept { chain ->
-                val result = chain.proceed()
-                try {
-                    updateSpecialBadge(chain.thisObject as? View, chain.getArg(0))
-                } catch (e: Throwable) {
-                    Log.w(TAG, "Badge: thumbnail update failed: ${e.message}")
-                }
-                result
-            }
-            Log.i(TAG, "Badge: ThumbnailView hook installed")
+            ThumbnailBind(method, modelClass, "d")
         } catch (e: Throwable) {
-            Log.e(TAG, "Badge: ThumbnailView hook failed", e)
-        }
-
-        try {
-            val itemClass = classLoader.loadClass(RANKING_ITEM)
-            val bind = itemClass.getDeclaredMethod("a")
-            hook(bind).intercept { chain ->
-                val result = chain.proceed()
-                try {
-                    val item = chain.thisObject
-                    val view = itemClass.getField("c").get(item) as? View
-                    val model = itemClass.getField("d").get(item)
-                    updateSpecialBadge(view, model)
-                } catch (e: Throwable) {
-                    Log.w(TAG, "Badge: ranking update failed: ${e.message}")
-                }
-                result
-            }
-            Log.i(TAG, "Badge: ranking hook installed")
-        } catch (e: Throwable) {
-            Log.e(TAG, "Badge: ranking hook failed", e)
+            Log.e(TAG, "Badge: fallback ThumbnailView bind failed", e)
+            null
         }
     }
 
+    private fun resolveRankingBind(
+        classLoader: ClassLoader,
+        bridge: DexKitBridge?,
+        modelClass: Class<*>?
+    ): RankingBind? {
+        val modelName = modelClass?.name
+        if (bridge != null && bridge.isValid && modelName != null) {
+            try {
+                val classes = bridge.findClass {
+                    matcher {
+                        addFieldForType(ILLUST_CARD_ITEM_VIEW)
+                    }
+                }
+                for (classData in classes) {
+                    val viewField = classData.fields
+                        .firstOrNull { it.typeName == ILLUST_CARD_ITEM_VIEW }
+                        ?.fieldName ?: continue
+                    val modelField = classData.fields
+                        .firstOrNull { it.typeName == modelName }
+                        ?.fieldName ?: continue
+                    val methods = classData.methods.filter {
+                        it.isMethod &&
+                            it.paramCount == 0 &&
+                            (it.returnTypeName == "void" || it.returnTypeName == "V")
+                    }
+                    val methodData = methods.firstOrNull { it.methodName == "a" }
+                        ?: methods.firstOrNull() ?: continue
+                    val method = runCatching {
+                        methodData.getMethodInstance(classLoader)
+                    }.getOrNull() ?: continue
+                    return RankingBind(
+                        method.declaringClass,
+                        method,
+                        viewField,
+                        modelField
+                    )
+                }
+            } catch (e: Throwable) {
+                Log.w(TAG, "Badge: DexKit ranking search failed: ${e.message}")
+            }
+        }
+
+        return try {
+            val itemClass = classLoader.loadClass(RANKING_ITEM)
+            val method = itemClass.getDeclaredMethod("a")
+            RankingBind(itemClass, method, "c", "d")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Badge: fallback ranking bind failed", e)
+            null
+        }
+    }
+
+    private fun isBooleanType(name: String): Boolean =
+        name == "boolean" || name == "Z" || name == "java.lang.Boolean"
+
+    private fun isIntegerType(name: String): Boolean =
+        name == "java.lang.Integer" || name == "int" || name == "I"
+
     private fun updateSpecialBadge(view: View?, model: Any?) {
         if (view == null || model == null) return
-        val restrict = readModelInt(model, "B0", "q") ?: 0
-        val aiType = readModelInt(model, null, "x") ?: 0
+        val restrict = readRestrict(model)
+        val aiType = readAiType(model)
         val labels = ArrayList<String>(2)
         when (restrict) {
             1 -> labels += "R18"
@@ -358,6 +491,26 @@ class ModuleMain : XposedModule() {
         container.bringToFront()
     }
 
+    private fun readRestrict(model: Any): Int {
+        readModelInt(model, "B0", "q")?.let { return it }
+        return Regex("xRestrict=(\\d+)")
+            .find(model.toString())
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+            ?: 0
+    }
+
+    private fun readAiType(model: Any): Int {
+        readModelInt(model, null, "x")?.let { return it }
+        return Regex("illustAiType=(\\d+)")
+            .find(model.toString())
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+            ?: 0
+    }
+
     private fun readModelInt(model: Any, methodName: String?, fieldName: String?): Int? {
         if (methodName != null) {
             try {
@@ -368,7 +521,10 @@ class ModuleMain : XposedModule() {
         }
         if (fieldName != null) {
             try {
-                return model.javaClass.getField(fieldName).getInt(model)
+                return model.javaClass
+                    .getDeclaredField(fieldName)
+                    .apply { isAccessible = true }
+                    .getInt(model)
             } catch (_: Throwable) {
             }
         }
