@@ -29,11 +29,34 @@ PAuxiliary 是适用于 [Pixiv](https://play.google.com/store/apps/details?id=jp
 
 - **多语言** — 跟随 Pixiv 当前语言，内置 English / 简体中文 / 日本語。
 
-### 截图
+### 截图与演示
 
-> 截图为早期版本，最新界面（模块设置页、PID 全类型搜索、封面标签/模糊）以实际安装为准。
+#### 界面
 
-![第一张](images/first.jpg) ![第二张](images/second.jpg)
+<table>
+<tr>
+<td><img src="images/pid-search.png" width="260" alt="PID 搜索与直接打开"></td>
+<td><img src="images/module-settings-entry.png" width="260" alt="模块设置入口"></td>
+</tr>
+<tr>
+<td><img src="images/r18-blur.png" width="260" alt="R18 封面模糊与标签"></td>
+<td><img src="images/trial-bypass.png" width="260" alt="热门排序试用"></td>
+</tr>
+</table>
+
+#### GIF 演示
+
+**PID 全类型搜索与直接打开**
+
+<img src="images/pid-search-demo.gif" width="300" alt="PID 搜索演示">
+
+**M3E 弹窗与作品详情**
+
+<img src="images/m3e-dialogs-demo.gif" width="300" alt="M3E 弹窗与作品详情演示">
+
+**趋势标签长按跳转作品**
+
+<img src="images/trend-tag-demo.gif" width="300" alt="趋势标签长按演示">
 
 ### 工作原理
 
