@@ -1616,6 +1616,7 @@ class ModuleMain : XposedModule() {
             hook(onCreate).setPriority(PRIORITY_LOWEST).intercept { chain ->
                 chain.proceed()
                 val activity = chain.thisObject as Activity
+                cachedApplication = activity.application
                 val nav = findNavigationView(activity.window.decorView)
                 if (nav == null) {
                     Log.e(TAG, "Display: NavigationView not found")
