@@ -10,6 +10,8 @@ import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Color
+import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -25,6 +27,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -53,6 +56,7 @@ class ModuleMain : XposedModule() {
         private const val NOVEL_SERIES_ACTIVITY =
             "jp.pxv.android.feature.novelseriesdetail.NovelSeriesDetailActivity"
         private const val DISPLAY_SETTINGS_MENU_ID = 0x4D4F4455
+        private const val MODULE_SETTINGS_MENU_ID = 0x4D4F4456
         private const val SEARCH_SEGMENT_CLASS =
             "jp.pxv.android.feature.component.androidview.segmentedcontrol.SegmentedLayout"
         private const val SEARCH_RESULT_ACTIVITY =
@@ -63,6 +67,10 @@ class ModuleMain : XposedModule() {
         private const val RANKING_ITEM = "defpackage.w64"
         private const val ILLUST_CARD_ITEM_VIEW =
             "jp.pxv.android.feature.ranking.common.IllustCardItemView"
+        private const val DETAIL_IMAGE_HOLDER =
+            "jp.pxv.android.feature.illustviewer.detail.DetailImageViewHolder"
+        private const val DETAIL_UGOIRA_HOLDER =
+            "jp.pxv.android.feature.illustviewer.detail.DetailUgoiraViewHolder"
         private const val PID_SEGMENT_INDEX = 3
         const val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
         const val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
@@ -113,6 +121,7 @@ class ModuleMain : XposedModule() {
 
         // R18 / R18G / AI-generated badges on illust covers.
         installSpecialBadge(cl, bridge)
+        installDetailBlur(cl)
 
         if (bridge != null && bridge.isValid) {
             installTrialHook(bridge, cl)
@@ -449,14 +458,24 @@ class ModuleMain : XposedModule() {
 
     private fun updateSpecialBadge(view: View?, model: Any?) {
         if (view == null || model == null) return
+        val context = view.context
         val restrict = readRestrict(model)
         val aiType = readAiType(model)
         val labels = ArrayList<String>(2)
-        when (restrict) {
-            1 -> labels += "R18"
-            2 -> labels += "R18G"
+        if (ModulePrefs.specialBadges(context)) {
+            when (restrict) {
+                1 -> labels += "R18"
+                2 -> labels += "R18G"
+            }
+            if (aiType == 2) labels += "AI"
         }
-        if (aiType == 2) labels += "AI"
+
+        val coverImage = findCoverImage(view)
+        applyBlurToView(
+            coverImage,
+            ModulePrefs.blurCovers(context) && (restrict == 1 || restrict == 2),
+            ModulePrefs.blurRadius(context)
+        )
 
         val existing = view.getTag(R.id.special_badge_tag) as? LinearLayout
         if (labels.isEmpty()) {
@@ -489,6 +508,116 @@ class ModuleMain : XposedModule() {
         labels.forEach { label -> container.addView(makeSpecialBadge(view.context, label)) }
         container.visibility = View.VISIBLE
         container.bringToFront()
+    }
+
+    private fun findCoverImage(root: View): ImageView? {
+        var exact: ImageView? = null
+        var best: ImageView? = null
+        var bestArea = -1
+        fun visit(view: View) {
+            if (exact != null) return
+            if (view is ImageView) {
+                val name = runCatching {
+                    view.resources.getResourceEntryName(view.id)
+                }.getOrNull()
+                if (name == "image_view" || name == "illust_image_view") {
+                    exact = view
+                    return
+                }
+                val area = view.width * view.height
+                if (area > bestArea) {
+                    bestArea = area
+                    best = view
+                }
+            }
+            if (view is ViewGroup) {
+                for (i in 0 until view.childCount) visit(view.getChildAt(i))
+            }
+        }
+        visit(root)
+        return exact ?: best
+    }
+
+    private fun applyBlurToView(target: View?, enabled: Boolean, radiusDp: Int) {
+        if (target == null) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val radius = radiusDp * target.resources.displayMetrics.density
+            target.setRenderEffect(
+                if (enabled) {
+                    RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
+                } else {
+                    null
+                }
+            )
+            target.alpha = 1f
+            if (target is ImageView) target.clearColorFilter()
+        } else {
+            target.alpha = if (enabled) 0.4f else 1f
+            if (target is ImageView) {
+                if (enabled) {
+                    target.setColorFilter(Color.argb(80, 0, 0, 0))
+                } else {
+                    target.clearColorFilter()
+                }
+            }
+        }
+    }
+
+    private fun installDetailBlur(classLoader: ClassLoader) {
+        hookDetailBlur(classLoader, DETAIL_IMAGE_HOLDER, "imageView")
+        hookDetailBlur(
+            classLoader,
+            DETAIL_UGOIRA_HOLDER,
+            "previewImageView",
+            "ugoiraView"
+        )
+    }
+
+    private fun hookDetailBlur(
+        classLoader: ClassLoader,
+        className: String,
+        vararg imageFields: String
+    ) {
+        try {
+            val cls = classLoader.loadClass(className)
+            val bind = cls.getDeclaredMethod("bind", Any::class.java)
+            hook(bind).intercept { chain ->
+                val result = chain.proceed()
+                try {
+                    val holder = chain.thisObject
+                    val item = chain.getArg(0)
+                    val model = item?.javaClass
+                        ?.getDeclaredField("d")
+                        ?.apply { isAccessible = true }
+                        ?.get(item)
+                    val itemView = holder.javaClass
+                        .getField("itemView")
+                        .get(holder) as? View
+                    val context = itemView?.context
+                    val restrict = model?.let { readRestrict(it) } ?: 0
+                    val enabled = context != null &&
+                        ModulePrefs.blurDetail(context) &&
+                        (restrict == 1 || restrict == 2)
+                    val radius = context?.let { ModulePrefs.blurRadius(it) }
+                        ?: ModulePrefs.DEFAULT_BLUR_RADIUS
+                    for (fieldName in imageFields) {
+                        val target = runCatching {
+                            holder.javaClass
+                                .getDeclaredField(fieldName)
+                                .apply { isAccessible = true }
+                                .get(holder)
+                        }.getOrNull() as? View
+                        applyBlurToView(target, enabled, radius)
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Blur: detail update failed: ${e.message}")
+                }
+                result
+            }
+            Log.i(TAG, "Blur: $className hook installed")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Blur: $className hook failed", e)
+        }
     }
 
     private fun readRestrict(model: Any): Int {
@@ -1511,21 +1640,44 @@ class ModuleMain : XposedModule() {
     private fun addDisplayMenuItem(activity: Activity, nav: View) {
         try {
             val menu = nav.javaClass.getMethod("getMenu").invoke(nav) as? Menu ?: return
-            if (menu.findItem(DISPLAY_SETTINGS_MENU_ID) != null) return
-            val item: MenuItem = menu.add(
-                Menu.NONE,
-                DISPLAY_SETTINGS_MENU_ID,
-                1000,
-                str(activity, R.string.display_settings, "Display settings")
-            )
-            item.setIcon(android.R.drawable.ic_menu_preferences)
-            item.setOnMenuItemClickListener {
-                openViewingSettings(activity)
-                closeDrawer(nav)
-                true
+            if (menu.findItem(MODULE_SETTINGS_MENU_ID) == null) {
+                val item: MenuItem = menu.add(
+                    Menu.NONE,
+                    MODULE_SETTINGS_MENU_ID,
+                    999,
+                    str(activity, R.string.module_settings, "Module settings")
+                )
+                item.setIcon(android.R.drawable.ic_menu_manage)
+                item.setOnMenuItemClickListener {
+                    closeDrawer(nav)
+                    val resources = moduleResources(activity)
+                    if (resources == null) {
+                        toast(
+                            activity,
+                            str(activity, R.string.failed_format, "Failed: %1\$s", "resources")
+                        )
+                    } else {
+                        showModuleSettings(activity, activity, resources)
+                    }
+                    true
+                }
+            }
+            if (menu.findItem(DISPLAY_SETTINGS_MENU_ID) == null) {
+                val item: MenuItem = menu.add(
+                    Menu.NONE,
+                    DISPLAY_SETTINGS_MENU_ID,
+                    1000,
+                    str(activity, R.string.display_settings, "Display settings")
+                )
+                item.setIcon(android.R.drawable.ic_menu_preferences)
+                item.setOnMenuItemClickListener {
+                    openViewingSettings(activity)
+                    closeDrawer(nav)
+                    true
+                }
             }
             nav.invalidate()
-            Log.i(TAG, "Display: sidebar item added")
+            Log.i(TAG, "Display: sidebar items added")
         } catch (e: Throwable) {
             Log.e(TAG, "Display: add sidebar item failed: ${e.message}", e)
         }
