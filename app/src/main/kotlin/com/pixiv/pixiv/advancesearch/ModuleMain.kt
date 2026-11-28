@@ -1973,6 +1973,7 @@ class ModuleMain : XposedModule() {
         val neutral: CharSequence?,
         val neutralListener: DialogInterface.OnClickListener?,
         val itemListener: DialogInterface.OnClickListener?,
+        val cancelable: Boolean,
         var cancelListener: DialogInterface.OnCancelListener?,
         val hasCustomView: Boolean,
         val hasAdapter: Boolean
@@ -2134,6 +2135,9 @@ class ModuleMain : XposedModule() {
                 as? DialogInterface.OnClickListener,
             itemListener = fields.itemListener?.get(params)
                 as? DialogInterface.OnClickListener,
+            cancelable = runCatching {
+                fields.cancelable?.getBoolean(params)
+            }.getOrNull() ?: true,
             cancelListener = fields.cancelListener?.get(params)
                 as? DialogInterface.OnCancelListener,
             hasCustomView = customView,
@@ -2300,7 +2304,10 @@ class ModuleMain : XposedModule() {
             positive = spec.positive?.toString(),
             negative = spec.negative?.toString(),
             neutral = spec.neutral?.toString(),
-            cancelable = dialog.isCancelable,
+            cancelable = runCatching {
+                Dialog::class.java.getMethod("isCancelable")
+                    .invoke(dialog) as? Boolean
+            }.getOrNull() ?: spec.cancelable,
             onItem = { index ->
                 spec.itemListener?.onClick(dialog, index)
             },
