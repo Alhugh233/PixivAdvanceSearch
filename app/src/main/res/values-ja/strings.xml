@@ -36,6 +36,8 @@
     <string name="settings_tab_about">このモジュールについて</string>
     <string name="settings_section_toggleable">切り替え可能な機能</string>
     <string name="settings_section_always_on">常時有効</string>
+    <string name="settings_m3e_title">M3E ダイアログ</string>
+    <string name="settings_m3e_desc">Pixiv 標準のダイアログとメニューを Material 3 Expressive に置き換えます。変更後は Pixiv を再起動してください。</string>
     <string name="settings_badges_title">カバーラベル</string>
     <string name="settings_badges_desc">イラストのカバーに R18・R18G・AI 生成ラベルを表示します。</string>
     <string name="settings_blur_covers_title">R18 カバーをぼかす</string>

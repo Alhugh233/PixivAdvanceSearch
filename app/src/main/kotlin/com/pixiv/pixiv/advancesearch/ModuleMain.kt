@@ -4,6 +4,7 @@ import android.accounts.AccountManager
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Application
+import android.app.Dialog
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.DialogInterface
@@ -18,6 +19,7 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Looper
 import android.os.SystemClock
 import android.text.InputType
 import android.util.Log
@@ -49,6 +51,7 @@ import org.luckypray.dexkit.query.enums.StringMatchType
 import java.io.Serializable
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
 class ModuleMain : XposedModule() {
@@ -134,6 +137,7 @@ class ModuleMain : XposedModule() {
         installTrendTagLongPress(cl, bridge)
 
         if (bridge != null && bridge.isValid) {
+            installM3eDialogs(cl, bridge)
             installTrialHook(bridge, cl)
             installAbTestHook(bridge, cl)
             installWorkDetailHook(bridge, cl)
@@ -1844,6 +1848,10 @@ class ModuleMain : XposedModule() {
     // ================================================================
 
     private var cachedApplication: Application? = null
+    private var m3eLoaded = false
+    private var m3eEnabled = false
+    private val dialogSpecs = WeakHashMap<Any, M3eDialogSpec>()
+    private val m3eDialogs = WeakHashMap<Any, Dialog>()
     private val trendTagWorks = ConcurrentHashMap<String, Any>()
     private var thumbnailModelClass: Class<*>? = null
     private val trendTouchHookedClasses = mutableSetOf<String>()
@@ -1920,6 +1928,422 @@ class ModuleMain : XposedModule() {
         } catch (e: Throwable) {
             Log.e(TAG, "get string $id failed: ${e.message}", e)
             if (args.isEmpty()) fallback else String.format(fallback, *args)
+        }
+    }
+
+    // ================================================================
+    // M3E dialogs — replace Pixiv's ne/je/oe AlertDialogs
+    // ================================================================
+
+    private class DialogFieldSet(cls: Class<*>) {
+        val title = field(cls, "d")
+        val message = field(cls, "f")
+        val positive = field(cls, "g")
+        val positiveListener = field(cls, "h")
+        val negative = field(cls, "i")
+        val negativeListener = field(cls, "j")
+        val neutral = field(cls, "k")
+        val neutralListener = field(cls, "l")
+        val items = field(cls, "p")
+        val adapter = field(cls, "q")
+        val itemListener = field(cls, "r")
+        val view = field(cls, "e")
+        val view2 = field(cls, "s")
+        val singleChoice = field(cls, "t")
+        val checkedItem = field(cls, "u")
+        val cancelable = field(cls, "m")
+        var cancelListener = field(cls, "n")
+
+        private fun field(cls: Class<*>, name: String): Field? =
+            runCatching {
+                cls.getDeclaredField(name).apply { isAccessible = true }
+            }.getOrNull()
+    }
+
+    private class M3eDialogSpec(
+        val title: CharSequence?,
+        val message: CharSequence?,
+        val items: List<String>?,
+        val singleChoice: Boolean,
+        val checkedItem: Int,
+        val positive: CharSequence?,
+        val positiveListener: DialogInterface.OnClickListener?,
+        val negative: CharSequence?,
+        val negativeListener: DialogInterface.OnClickListener?,
+        val neutral: CharSequence?,
+        val neutralListener: DialogInterface.OnClickListener?,
+        val itemListener: DialogInterface.OnClickListener?,
+        var cancelListener: DialogInterface.OnCancelListener?,
+        val hasCustomView: Boolean,
+        val hasAdapter: Boolean
+    ) {
+        var dismissListener: DialogInterface.OnDismissListener? = null
+        var showListener: DialogInterface.OnShowListener? = null
+
+        val rewriteable: Boolean
+            get() = !hasCustomView && !hasAdapter &&
+                (items != null ||
+                    !title.isNullOrBlank() ||
+                    !message.isNullOrBlank() ||
+                    positive != null ||
+                    negative != null ||
+                    neutral != null)
+    }
+
+    private fun m3eDialogsEnabled(context: Context): Boolean {
+        if (!m3eLoaded) {
+            m3eEnabled = ModulePrefs.m3eDialogs(context.applicationContext)
+            m3eLoaded = true
+            Log.i(TAG, "M3E: enabled=$m3eEnabled (restart to change)")
+        }
+        return m3eEnabled
+    }
+
+    private fun installM3eDialogs(classLoader: ClassLoader, bridge: DexKitBridge) {
+        try {
+            val paramsClass = findDialogParamsClass(bridge, classLoader)
+            if (paramsClass == null) {
+                Log.e(TAG, "M3E: dialog params class not found")
+                return
+            }
+            val builderClass = findDialogBuilderClass(bridge, classLoader, paramsClass)
+            if (builderClass == null) {
+                Log.e(TAG, "M3E: dialog builder class not found")
+                return
+            }
+            val create = builderClass.declaredMethods.firstOrNull {
+                it.name == "create" &&
+                    it.parameterTypes.isEmpty() &&
+                    Dialog::class.java.isAssignableFrom(it.returnType)
+            } ?: builderClass.declaredMethods.firstOrNull {
+                it.parameterTypes.isEmpty() &&
+                    Dialog::class.java.isAssignableFrom(it.returnType)
+            }
+            if (create == null) {
+                Log.e(TAG, "M3E: create() not found in ${builderClass.name}")
+                return
+            }
+            val dialogClass = create.returnType
+            val paramsField = builderClass.declaredFields
+                .firstOrNull { it.type == paramsClass }
+                ?.apply { isAccessible = true }
+            if (paramsField == null) {
+                Log.e(TAG, "M3E: params field not found in ${builderClass.name}")
+                return
+            }
+            val fields = DialogFieldSet(paramsClass)
+
+            hook(create).intercept { chain ->
+                val builder = chain.thisObject
+                val result = chain.proceed()
+                try {
+                    if (result != null) {
+                        val params = paramsField.get(builder)
+                        if (params != null) {
+                            dialogSpecs[result] = readDialogSpec(result, params, fields)
+                        }
+                    }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "M3E: read spec failed: ${e.message}")
+                }
+                result
+            }
+
+            hookDialogLifecycle(dialogClass)
+            Log.i(
+                TAG,
+                "M3E: hook installed (${builderClass.name} -> ${dialogClass.name})"
+            )
+        } catch (e: Throwable) {
+            Log.e(TAG, "M3E: install failed", e)
+        }
+    }
+
+    private fun findDialogParamsClass(
+        bridge: DexKitBridge,
+        classLoader: ClassLoader
+    ): Class<*>? {
+        val results = bridge.findMethod {
+            matcher { addUsingString("layout_inflater", StringMatchType.Equals) }
+        }
+        for (result in results) {
+            val cls = runCatching {
+                result.getClassInstance(classLoader)
+            }.getOrNull() ?: continue
+            val hasItems = cls.declaredFields.any {
+                it.type.isArray && it.type.componentType == CharSequence::class.java
+            }
+            val hasListener = cls.declaredFields.any {
+                DialogInterface.OnClickListener::class.java.isAssignableFrom(it.type)
+            }
+            if (hasItems && hasListener) return cls
+        }
+        return null
+    }
+
+    private fun findDialogBuilderClass(
+        bridge: DexKitBridge,
+        classLoader: ClassLoader,
+        paramsClass: Class<*>
+    ): Class<*>? {
+        val ctor = paramsClass.declaredConstructors
+            .firstOrNull { it.parameterTypes.size == 1 }
+        if (ctor != null) {
+            val descriptor = getMethodDescriptor(ctor)
+            val results = bridge.findMethod {
+                matcher { addInvoke(descriptor) }
+            }
+            for (result in results) {
+                val cls = runCatching {
+                    result.getClassInstance(classLoader)
+                }.getOrNull() ?: continue
+                if (cls.declaredFields.any { it.type == paramsClass }) return cls
+            }
+        }
+        return runCatching { classLoader.loadClass("ne") }.getOrNull()
+    }
+
+    private fun readDialogSpec(
+        dialog: Any,
+        params: Any,
+        fields: DialogFieldSet
+    ): M3eDialogSpec {
+        val itemsArray = fields.items?.get(params) as? Array<*>
+        val items = itemsArray
+            ?.takeIf { it.isNotEmpty() }
+            ?.map { it?.toString() ?: "" }
+        val adapter = fields.adapter?.get(params)
+        val customView = fields.view?.get(params) != null ||
+            fields.view2?.get(params) != null
+        val spec = M3eDialogSpec(
+            title = fields.title?.get(params) as? CharSequence,
+            message = fields.message?.get(params) as? CharSequence,
+            items = items,
+            singleChoice = fields.singleChoice?.getBoolean(params) == true,
+            checkedItem = runCatching {
+                fields.checkedItem?.getInt(params)
+            }.getOrNull() ?: -1,
+            positive = fields.positive?.get(params) as? CharSequence,
+            positiveListener = fields.positiveListener?.get(params)
+                as? DialogInterface.OnClickListener,
+            negative = fields.negative?.get(params) as? CharSequence,
+            negativeListener = fields.negativeListener?.get(params)
+                as? DialogInterface.OnClickListener,
+            neutral = fields.neutral?.get(params) as? CharSequence,
+            neutralListener = fields.neutralListener?.get(params)
+                as? DialogInterface.OnClickListener,
+            itemListener = fields.itemListener?.get(params)
+                as? DialogInterface.OnClickListener,
+            cancelListener = fields.cancelListener?.get(params)
+                as? DialogInterface.OnCancelListener,
+            hasCustomView = customView,
+            hasAdapter = adapter != null
+        )
+        spec.dismissListener = readDialogField(dialog, "mOnDismissListener")
+            as? DialogInterface.OnDismissListener
+        spec.showListener = readDialogField(dialog, "mOnShowListener")
+            as? DialogInterface.OnShowListener
+        if (spec.cancelListener == null) {
+            spec.cancelListener = readDialogField(dialog, "mOnCancelListener")
+                as? DialogInterface.OnCancelListener
+        }
+        return spec
+    }
+
+    private fun readDialogField(dialog: Any, name: String): Any? {
+        return try {
+            val field = Dialog::class.java.getDeclaredField(name)
+            field.isAccessible = true
+            field.get(dialog)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun hookDialogLifecycle(dialogClass: Class<*>) {
+        try {
+            hook(dialogClass.getMethod("show")).intercept { chain ->
+                val dialog = chain.thisObject as? Dialog
+                if (dialog == null) return@intercept chain.proceed()
+                val spec = dialogSpecs[dialog]
+                if (spec == null ||
+                    !spec.rewriteable ||
+                    !m3eDialogsEnabled(dialog.context)
+                ) {
+                    return@intercept chain.proceed()
+                }
+                val existing = m3eDialogs[dialog]
+                if (existing != null) {
+                    if (!existing.isShowing) {
+                        runCatching { existing.show() }
+                    }
+                    return@intercept null
+                }
+                if (Looper.myLooper() != Looper.getMainLooper()) {
+                    Log.w(TAG, "M3E: show not on main thread, fallback")
+                    return@intercept chain.proceed()
+                }
+                if (showM3eForSpec(dialog, spec)) null else chain.proceed()
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "M3E: show hook failed", e)
+        }
+
+        try {
+            hook(dialogClass.getMethod("dismiss")).intercept { chain ->
+                val dialog = chain.thisObject as? Dialog
+                if (dialog == null) return@intercept chain.proceed()
+                val compose = m3eDialogs.remove(dialog)
+                if (compose != null) {
+                    dialogSpecs.remove(dialog)
+                    runCatching { compose.dismiss() }
+                    return@intercept null
+                }
+                dialogSpecs.remove(dialog)
+                chain.proceed()
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "M3E: dismiss hook failed", e)
+        }
+
+        try {
+            hook(dialogClass.getMethod("cancel")).intercept { chain ->
+                val dialog = chain.thisObject as? Dialog
+                if (dialog == null) return@intercept chain.proceed()
+                val compose = m3eDialogs.remove(dialog)
+                if (compose != null) {
+                    dialogSpecs.remove(dialog)
+                    runCatching { compose.cancel() }
+                    return@intercept null
+                }
+                dialogSpecs.remove(dialog)
+                chain.proceed()
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "M3E: cancel hook failed", e)
+        }
+
+        try {
+            hook(dialogClass.getMethod("isShowing")).intercept { chain ->
+                val dialog = chain.thisObject as? Dialog
+                val compose = dialog?.let { m3eDialogs[it] }
+                if (compose != null) return@intercept compose.isShowing
+                chain.proceed()
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "M3E: isShowing hook failed", e)
+        }
+
+        try {
+            hook(dialogClass.getMethod("hide")).intercept { chain ->
+                val dialog = chain.thisObject as? Dialog
+                val compose = dialog?.let { m3eDialogs[it] }
+                if (compose != null) {
+                    runCatching { compose.hide() }
+                    return@intercept null
+                }
+                chain.proceed()
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "M3E: hide hook failed", e)
+        }
+
+        hookDialogListenerSetter(
+            "setOnDismissListener",
+            DialogInterface.OnDismissListener::class.java
+        ) { spec, listener ->
+            spec.dismissListener = listener as? DialogInterface.OnDismissListener
+        }
+        hookDialogListenerSetter(
+            "setOnCancelListener",
+            DialogInterface.OnCancelListener::class.java
+        ) { spec, listener ->
+            spec.cancelListener = listener as? DialogInterface.OnCancelListener
+        }
+        hookDialogListenerSetter(
+            "setOnShowListener",
+            DialogInterface.OnShowListener::class.java
+        ) { spec, listener ->
+            spec.showListener = listener as? DialogInterface.OnShowListener
+        }
+        Log.i(TAG, "M3E: lifecycle hooks installed (${dialogClass.name})")
+    }
+
+    private fun hookDialogListenerSetter(
+        name: String,
+        listenerType: Class<*>,
+        store: (M3eDialogSpec, Any?) -> Unit
+    ) {
+        try {
+            hook(Dialog::class.java.getMethod(name, listenerType)).intercept { chain ->
+                val dialog = chain.thisObject as? Dialog
+                val spec = dialog?.let { dialogSpecs[it] }
+                if (spec != null) {
+                    store(spec, chain.getArg(0))
+                }
+                chain.proceed()
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "M3E: $name hook failed: ${e.message}")
+        }
+    }
+
+    private fun showM3eForSpec(dialog: Dialog, spec: M3eDialogSpec): Boolean {
+        val activity = dialog.context.findActivity() ?: return false
+        val resources = moduleResources(activity) ?: return false
+        val data = M3eDialogData(
+            title = spec.title?.toString(),
+            message = spec.message?.toString(),
+            items = spec.items,
+            singleChoice = spec.singleChoice,
+            checkedItem = spec.checkedItem,
+            positive = spec.positive?.toString(),
+            negative = spec.negative?.toString(),
+            neutral = spec.neutral?.toString(),
+            cancelable = dialog.isCancelable,
+            onItem = { index ->
+                spec.itemListener?.onClick(dialog, index)
+            },
+            onPositive = {
+                spec.positiveListener?.onClick(
+                    dialog,
+                    DialogInterface.BUTTON_POSITIVE
+                )
+            },
+            onNegative = {
+                spec.negativeListener?.onClick(
+                    dialog,
+                    DialogInterface.BUTTON_NEGATIVE
+                )
+            },
+            onNeutral = {
+                spec.neutralListener?.onClick(
+                    dialog,
+                    DialogInterface.BUTTON_NEUTRAL
+                )
+            },
+            onCancel = {
+                spec.cancelListener?.onCancel(dialog)
+            },
+            onDismiss = {
+                m3eDialogs.remove(dialog)
+                dialogSpecs.remove(dialog)
+                spec.dismissListener?.onDismiss(dialog)
+            }
+        )
+        return try {
+            val compose = showM3eDialog(activity, activity, resources, data)
+            m3eDialogs[dialog] = compose
+            Log.i(
+                TAG,
+                "M3E: rewrite title=${data.title} items=${data.items?.size ?: 0}"
+            )
+            runCatching { spec.showListener?.onShow(dialog) }
+                .onFailure { Log.w(TAG, "M3E: onShow failed: ${it.message}") }
+            true
+        } catch (e: Throwable) {
+            Log.e(TAG, "M3E: show failed", e)
+            false
         }
     }
 
@@ -2118,6 +2542,29 @@ class ModuleMain : XposedModule() {
                 title, userName, workPid, userPid
             )
 
+            val activity = ctx.findActivity()
+            if (activity != null && m3eDialogsEnabled(activity)) {
+                val resources = moduleResources(activity)
+                if (resources != null) {
+                    showM3eDialog(
+                        activity = activity,
+                        hostContext = activity,
+                        moduleResources = resources,
+                        data = M3eDialogData(
+                            title = str(
+                                activity,
+                                R.string.work_details_title,
+                                "Work details"
+                            ),
+                            message = body,
+                            positive = str(activity, R.string.ok, "OK"),
+                            cancelable = true
+                        )
+                    )
+                    return
+                }
+            }
+
             val tv = TextView(ctx).apply {
                 setTextIsSelectable(true)
                 text = body
@@ -2234,6 +2681,7 @@ class ModuleMain : XposedModule() {
                 chain.proceed()
                 val activity = chain.thisObject as Activity
                 cachedApplication = activity.application
+                m3eDialogsEnabled(activity)
                 val nav = findNavigationView(activity.window.decorView)
                 if (nav == null) {
                     Log.e(TAG, "Display: NavigationView not found")

@@ -76,7 +76,7 @@ import kotlin.math.roundToInt
 
 private const val MODULE_PACKAGE = "com.pixiv.pixiv.advancesearch"
 
-private val SettingsLightColors = lightColorScheme(
+internal val SettingsLightColors = lightColorScheme(
     primary = Color(0xFF00639B),
     onPrimary = Color(0xFFFFFFFF),
     primaryContainer = Color(0xFFC9E6FF),
@@ -90,7 +90,7 @@ private val SettingsLightColors = lightColorScheme(
     outline = Color(0xFF757780)
 )
 
-private val SettingsDarkColors = darkColorScheme(
+internal val SettingsDarkColors = darkColorScheme(
     primary = Color(0xFF96CCFF),
     onPrimary = Color(0xFF003354),
     primaryContainer = Color(0xFF004A75),
@@ -104,7 +104,7 @@ private val SettingsDarkColors = darkColorScheme(
     outline = Color(0xFF8F909A)
 )
 
-private val SettingsShapes = Shapes(
+internal val SettingsShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(16.dp),
@@ -112,7 +112,7 @@ private val SettingsShapes = Shapes(
     extraLarge = RoundedCornerShape(32.dp)
 )
 
-private class SettingsComposeContext(
+internal class SettingsComposeContext(
     base: Context,
     private val moduleRes: Resources
 ) : ContextWrapper(base) {
@@ -120,7 +120,7 @@ private class SettingsComposeContext(
     override fun getAssets() = moduleRes.assets
 }
 
-private class SettingsComposeOwner(private val activity: Activity) :
+internal class SettingsComposeOwner(private val activity: Activity) :
     LifecycleOwner, SavedStateRegistryOwner, ViewModelStoreOwner {
     private val registry = LifecycleRegistry(this)
     private val savedStateController = SavedStateRegistryController.create(this)
@@ -366,7 +366,7 @@ private fun moduleVersion(context: Context): String {
 }
 
 @Composable
-private fun ModuleSettingsTheme(content: @Composable () -> Unit) {
+internal fun ModuleSettingsTheme(content: @Composable () -> Unit) {
     MaterialExpressiveTheme(
         colorScheme = if (isSystemInDarkTheme()) SettingsDarkColors else SettingsLightColors,
         motionScheme = MotionScheme.expressive(),
@@ -443,6 +443,7 @@ private fun ConfigScreen(context: Context, modifier: Modifier = Modifier) {
     var badges by remember { mutableStateOf(ModulePrefs.specialBadges(context)) }
     var blurCovers by remember { mutableStateOf(ModulePrefs.blurCovers(context)) }
     var blurDetail by remember { mutableStateOf(ModulePrefs.blurDetail(context)) }
+    var m3eDialogs by remember { mutableStateOf(ModulePrefs.m3eDialogs(context)) }
     var radius by remember { mutableIntStateOf(ModulePrefs.blurRadius(context)) }
 
     Column(
@@ -453,6 +454,15 @@ private fun ConfigScreen(context: Context, modifier: Modifier = Modifier) {
     ) {
         SectionTitle(stringResource(R.string.settings_section_toggleable))
 
+        FeatureSwitch(
+            title = stringResource(R.string.settings_m3e_title),
+            description = stringResource(R.string.settings_m3e_desc),
+            checked = m3eDialogs,
+            onCheckedChange = {
+                m3eDialogs = it
+                ModulePrefs.setM3eDialogs(context, it)
+            }
+        )
         FeatureSwitch(
             title = stringResource(R.string.settings_badges_title),
             description = stringResource(R.string.settings_badges_desc),

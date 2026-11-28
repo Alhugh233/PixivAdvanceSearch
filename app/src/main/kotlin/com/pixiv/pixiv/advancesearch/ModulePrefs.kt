@@ -9,6 +9,7 @@ internal object ModulePrefs {
     private const val KEY_BLUR_COVERS = "blur_covers"
     private const val KEY_BLUR_DETAIL = "blur_detail"
     private const val KEY_BLUR_RADIUS = "blur_radius"
+    private const val KEY_M3E_DIALOGS = "m3e_dialogs"
 
     const val MIN_BLUR_RADIUS = 5
     const val MAX_BLUR_RADIUS = 50
@@ -48,5 +49,16 @@ internal object ModulePrefs {
             .edit()
             .putInt(KEY_BLUR_RADIUS, value.coerceIn(MIN_BLUR_RADIUS, MAX_BLUR_RADIUS))
             .apply()
+    }
+
+    /**
+     * Read once at process start / first dialog; changing it requires a Pixiv
+     * restart because the dialog hooks and the cached value are installed then.
+     */
+    fun m3eDialogs(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_M3E_DIALOGS, false)
+
+    fun setM3eDialogs(context: Context, value: Boolean) {
+        prefs(context).edit().putBoolean(KEY_M3E_DIALOGS, value).apply()
     }
 }

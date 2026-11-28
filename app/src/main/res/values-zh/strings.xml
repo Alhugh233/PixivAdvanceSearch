@@ -36,6 +36,8 @@
     <string name="settings_tab_about">关于</string>
     <string name="settings_section_toggleable">可开关功能</string>
     <string name="settings_section_always_on">始终开启</string>
+    <string name="settings_m3e_title">M3E 弹窗</string>
+    <string name="settings_m3e_desc">把 Pixiv 自带的提示框和菜单替换为 Material 3 Expressive 风格。更改后需重启 Pixiv 生效。</string>
     <string name="settings_badges_title">封面特殊标签</string>
     <string name="settings_badges_desc">在插画封面上显示 R18、R18G 和 AI 生成标签。</string>
     <string name="settings_blur_covers_title">R18/R18G 封面模糊</string>

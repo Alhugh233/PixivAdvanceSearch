@@ -21,6 +21,8 @@
 
 - **趋势标签长按** — 在搜索页长按趋势标签，弹出操作菜单：搜索该标签、跳转到示例作品、查看作品信息。普通点击仍保持原搜索行为。
 
+- **M3E 弹窗** — 默认关闭。开启后把 Pixiv 自带的标题/正文/按钮提示框和列表菜单替换为 Material 3 Expressive 风格，列表菜单使用底部 Sheet。更改开关后需重启 Pixiv 生效；自定义 View、Spinner 和溢出菜单暂保持原生。
+
 - **作品详情查看** — 长按作品 → 菜单新增「查看详情」。弹窗显示作品名称、作者名称、作品 PID、用户 PID，支持长按复制。
 
 - **显示设置** — 侧边栏保留「显示设置」选项，点击打开网页版浏览与显示设置。
@@ -44,6 +46,7 @@
 | 封面标签 / 封面模糊 | `ThumbnailView.d(ce7, boolean, Integer)`、排行榜 `d74.a()` | DexKit 定位 bind 方法与作品模型；字段读取失败时用 `toString` 兜底 |
 | 详情预览模糊 | `DetailImageViewHolder.bind`、`DetailUgoiraViewHolder.bind` | 直接类名；读取作品模型 `xRestrict` 后对预览 View 应用模糊 |
 | 趋势标签长按 | 搜索页趋势标签点击回调 | DexKit 用 `"TrendTag(tag="` / `"SearchIllustAtTrendTag"` 定位数据类与回调；Hook `AbstractComposeView` 判断长按 |
+| M3E 弹窗 | `ne.create()` / `oe.show()` | DexKit 定位 `ne`/`je`/`oe`；`create()` 读取标题、正文、按钮和菜单项，`show()` 时替换为 Compose M3E 弹窗 |
 | 模块设置 | `MainActivity` 侧边栏 | 查找 `NavigationView`，添加菜单项并打开 Compose 全屏 Dialog |
 | 显示设置 | `MainActivity` 侧边栏 | 查找 `NavigationView`，添加菜单项并打开网页设置 |
 | 查看详情 | 对话框 builder 的 `create()` | DexKit: `"layout_inflater"` → builder 参数类 → `addInvoke` → builder → `create()` |
