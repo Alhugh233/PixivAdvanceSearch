@@ -128,7 +128,7 @@ class ModuleMain : XposedModule() {
         // R18 / R18G / AI-generated badges on illust covers.
         installSpecialBadge(cl, bridge)
         installDetailBlur(cl)
-        installTrendTagLongPress(cl)
+        installTrendTagLongPress(cl, bridge)
 
         if (bridge != null && bridge.isValid) {
             installTrialHook(bridge, cl)
@@ -302,6 +302,7 @@ class ModuleMain : XposedModule() {
 
     private fun installSpecialBadge(classLoader: ClassLoader, bridge: DexKitBridge?) {
         val thumbnail = resolveThumbnailBind(classLoader, bridge)
+        thumbnailModelClass = thumbnail?.modelClass
         if (thumbnail == null) {
             Log.e(TAG, "Badge: ThumbnailView bind not found")
         } else {
@@ -631,121 +632,302 @@ class ModuleMain : XposedModule() {
     // Search trend tags — long press for Compose actions
     // ================================================================
 
-    private fun installTrendTagLongPress(classLoader: ClassLoader) {
+    private fun installTrendTagLongPress(classLoader: ClassLoader, bridge: DexKitBridge?) {
+        if (bridge == null || !bridge.isValid) {
+            Log.e(TAG, "TrendTag: DexKit unavailable")
+            return
+        }
+        val modelClass = thumbnailModelClass
+        if (modelClass == null) {
+            Log.e(TAG, "TrendTag: illust model class unavailable")
+            return
+        }
+
         try {
-            val zgaClass = classLoader.loadClass("defpackage.zga")
-            val ctor = zgaClass.declaredConstructors.firstOrNull {
-                it.parameterTypes.size == 3 &&
-                    it.parameterTypes[0] == String::class.java &&
-                    it.parameterTypes[2] == String::class.java
-            }
-            if (ctor == null) {
-                Log.e(TAG, "TrendTag: zga constructor not found")
+            val dataClass = findTrendTagDataClass(bridge, classLoader, modelClass)
+            if (dataClass == null) {
+                Log.e(TAG, "TrendTag: data class not found")
             } else {
-                hook(ctor).intercept { chain ->
-                    val result = chain.proceed()
-                    val tag = chain.getArg(0) as? String
-                    val work = chain.getArg(1)
-                    if (tag != null && work != null) {
-                        trendTagWorks[tag] = work
-                    }
-                    result
+                val ctor = dataClass.declaredConstructors.firstOrNull {
+                    it.parameterTypes.size == 3 &&
+                        it.parameterTypes[0] == String::class.java &&
+                        it.parameterTypes[1] == modelClass &&
+                        it.parameterTypes[2] == String::class.java
                 }
-                Log.i(TAG, "TrendTag: data hook installed")
+                if (ctor == null) {
+                    Log.e(TAG, "TrendTag: data constructor not found")
+                } else {
+                    hook(ctor).intercept { chain ->
+                        val result = chain.proceed()
+                        val tag = chain.getArg(0) as? String
+                        val work = chain.getArg(1)
+                        if (tag != null && work != null) {
+                            trendTagWorks[tag] = work
+                        }
+                        result
+                    }
+                    Log.i(TAG, "TrendTag: data hook installed (${dataClass.name})")
+                }
             }
         } catch (e: Throwable) {
             Log.e(TAG, "TrendTag: data hook failed", e)
         }
 
-        try {
-            val composeView = classLoader.loadClass(
-                "androidx.compose.ui.platform.AndroidComposeView"
-            )
-            val dispatch = composeView.getDeclaredMethod(
-                "dispatchTouchEvent",
-                MotionEvent::class.java
-            )
-            hook(dispatch).intercept { chain ->
-                val event = chain.getArg(0) as? MotionEvent
-                val view = chain.thisObject as? View
-                if (event != null) trackTrendTouch(event, view?.context)
-                chain.proceed()
-            }
-            Log.i(TAG, "TrendTag: touch hook installed")
-        } catch (e: Throwable) {
-            Log.e(TAG, "TrendTag: touch hook failed", e)
-        }
+        installTrendTagTouch(classLoader)
 
         try {
-            val u37Class = classLoader.loadClass("defpackage.u37")
-            val invoke = u37Class.getDeclaredMethod("invoke", Any::class.java)
-            hook(invoke).intercept { chain ->
-                val callback = chain.thisObject
-                val case = runCatching {
-                    u37Class.getField("a").getByte(callback)
-                }.getOrNull()
-                if (case != 17.toByte()) {
-                    return@intercept chain.proceed()
-                }
-                val tag = chain.getArg(0) as? String
-                if (tag == null) {
-                    return@intercept chain.proceed()
-                }
-                if (trendSearchBypass) {
-                    trendSearchBypass = false
-                    return@intercept chain.proceed()
-                }
-                if (!trendLongPress) {
-                    return@intercept chain.proceed()
-                }
-                trendLongPress = false
-
-                val fragment = runCatching {
-                    u37Class.getField("c").get(callback)
-                }.getOrNull()
-                val activity = fragment?.let {
-                    runCatching {
-                        it.javaClass.getMethod("requireActivity").invoke(it) as? Activity
-                    }.getOrNull()
-                }
-                val resources = activity?.let { moduleResources(it) }
-                if (activity == null || resources == null) {
-                    Log.w(TAG, "TrendTag: no activity/resources for dialog")
-                    return@intercept chain.proceed()
-                }
-                val work = trendTagWorks[tag]
-                showTrendTagDialog(
-                    activity = activity,
-                    hostContext = activity,
-                    moduleResources = resources,
-                    tag = tag,
-                    hasWork = work != null,
-                    onSearch = {
-                        try {
-                            trendSearchBypass = true
-                            invoke.invoke(callback, tag)
-                        } catch (e: Throwable) {
-                            Log.e(TAG, "TrendTag: search failed", e)
-                        } finally {
+            val callbacks = findTrendTagCallbacks(bridge, classLoader)
+            if (callbacks.isEmpty()) {
+                Log.e(TAG, "TrendTag: callback method not found")
+            } else {
+                for (callbackMethod in callbacks) {
+                    hook(callbackMethod).intercept { chain ->
+                        val tag = chain.getArg(0) as? String
+                        if (tag == null) {
+                            return@intercept chain.proceed()
+                        }
+                        if (trendSearchBypass) {
                             trendSearchBypass = false
+                            return@intercept chain.proceed()
                         }
-                    },
-                    onOpenWork = {
-                        val id = work?.let { workId(it) }
-                        if (id != null) {
-                            openPid(activity, id, ILLUST_ACTIVITY, "ILLUST_ID")
+                        if (!trendLongPress || !trendTagWorks.containsKey(tag)) {
+                            return@intercept chain.proceed()
                         }
-                    },
-                    onWorkInfo = {
-                        work?.let { showWorkDetailDialog(activity, it) }
+                        trendLongPress = false
+
+                        val callback = chain.thisObject
+                        val activity = activityFromCallback(callback)
+                        val resources = activity?.let { moduleResources(it) }
+                        if (activity == null || resources == null) {
+                            Log.w(TAG, "TrendTag: no activity/resources for dialog")
+                            return@intercept chain.proceed()
+                        }
+                        val work = trendTagWorks[tag]
+                        showTrendTagDialog(
+                            activity = activity,
+                            hostContext = activity,
+                            moduleResources = resources,
+                            tag = tag,
+                            hasWork = work != null,
+                            onSearch = {
+                                try {
+                                    trendSearchBypass = true
+                                    callbackMethod.invoke(callback, tag)
+                                } catch (e: Throwable) {
+                                    Log.e(TAG, "TrendTag: search failed", e)
+                                } finally {
+                                    trendSearchBypass = false
+                                }
+                            },
+                            onOpenWork = {
+                                val id = work?.let { workId(it) }
+                                if (id != null) {
+                                    openPid(activity, id, ILLUST_ACTIVITY, "ILLUST_ID")
+                                }
+                            },
+                            onWorkInfo = {
+                                work?.let { showWorkDetailDialog(activity, it) }
+                            }
+                        )
+                        null
                     }
-                )
-                null
+                }
+                Log.i(TAG, "TrendTag: long-press hook installed (${callbacks.size})")
             }
-            Log.i(TAG, "TrendTag: long-press hook installed")
         } catch (e: Throwable) {
             Log.e(TAG, "TrendTag: long-press hook failed", e)
         }
+    }
+
+    private fun findTrendTagDataClass(
+        bridge: DexKitBridge,
+        classLoader: ClassLoader,
+        modelClass: Class<*>
+    ): Class<*>? {
+        val results = bridge.findClass {
+            matcher {
+                addFieldForType(modelClass.name)
+                addFieldForType("java.lang.String")
+            }
+        }
+        for (classData in results) {
+            val fields = classData.fields
+            if (fields.size != 3) continue
+            if (fields[0].typeName != "java.lang.String") continue
+            if (fields[1].typeName != modelClass.name) continue
+            if (fields[2].typeName != "java.lang.String") continue
+            val cls = runCatching {
+                classData.getInstance(classLoader)
+            }.getOrNull() ?: continue
+            if (cls.declaredConstructors.any {
+                    it.parameterTypes.size == 3 &&
+                        it.parameterTypes[0] == String::class.java &&
+                        it.parameterTypes[1] == modelClass &&
+                        it.parameterTypes[2] == String::class.java
+                }
+            ) {
+                return cls
+            }
+        }
+        val ctors = bridge.findMethod {
+            matcher {
+                name = "<init>"
+                paramTypes = listOf(
+                    "java.lang.String",
+                    modelClass.name,
+                    "java.lang.String"
+                )
+            }
+        }
+        for (ctor in ctors) {
+            val cls = runCatching {
+                ctor.getClassInstance(classLoader)
+            }.getOrNull() ?: continue
+            if (!cls.isInterface) return cls
+        }
+        return null
+    }
+
+    private fun findTrendTagCallbacks(
+        bridge: DexKitBridge,
+        classLoader: ClassLoader
+    ): List<Method> {
+        val contentTypeName = "jp.pxv.android.domain.commonentity.ContentType"
+        val targetClassName = runCatching {
+            bridge.findClass {
+                matcher { addUsingString("exact_match_for_tags") }
+            }.firstOrNull()?.name
+        }.getOrNull()
+        if (targetClassName == null) {
+            Log.w(TAG, "TrendTag: search target class not found, broad search")
+        } else {
+            Log.i(TAG, "TrendTag: search target class=$targetClassName")
+        }
+        val results = bridge.findMethod {
+            matcher {
+                paramCount = 1
+                returnType = "java.lang.Object"
+                addUsingField { type = contentTypeName }
+                if (targetClassName != null) {
+                    addUsingField { type = targetClassName }
+                }
+            }
+        }
+        val out = ArrayList<Method>()
+        for (result in results) {
+            val cls = runCatching {
+                result.getClassInstance(classLoader)
+            }.getOrNull() ?: continue
+            if (cls.isInterface) continue
+            if (cls.declaredFields.none { it.type == java.lang.Byte.TYPE }) continue
+            val types = result.paramTypeNames
+            if (types.size != 1 || types[0] != "java.lang.Object") continue
+            runCatching {
+                result.getMethodInstance(classLoader)
+            }.getOrNull()?.let { out += it }
+        }
+        return out
+    }
+
+    private fun installTrendTagTouch(classLoader: ClassLoader) {
+        try {
+            val composeViewClass = classLoader.loadClass(
+                "androidx.compose.ui.platform.ComposeView"
+            )
+            var hooked = 0
+            for (ctor in composeViewClass.declaredConstructors) {
+                if (ctor.parameterTypes.isEmpty()) continue
+                if (ctor.parameterTypes[0] != Context::class.java) continue
+                hook(ctor).intercept { chain ->
+                    val result = chain.proceed()
+                    val view = chain.thisObject as? View
+                    if (view != null) {
+                        view.post { attachTrendTagTouch(view) }
+                    }
+                    result
+                }
+                hooked++
+            }
+            if (hooked == 0) {
+                Log.e(TAG, "TrendTag: ComposeView constructor not found")
+            } else {
+                Log.i(TAG, "TrendTag: ComposeView touch hook installed")
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "TrendTag: touch hook failed", e)
+        }
+    }
+
+    private fun attachTrendTagTouch(root: View, attempt: Int = 0) {
+        val target = findComposeTouchTarget(root)
+        if (target == null) {
+            if (attempt < 10) {
+                root.postDelayed({ attachTrendTagTouch(root, attempt + 1) }, 50L)
+            }
+            return
+        }
+        if (target.getTag(R.id.trend_touch_tag) == true) return
+        target.setTag(R.id.trend_touch_tag, true)
+
+        val cls = target.javaClass
+        var hooked = !trendTouchHookedClasses.add(cls.name)
+        if (!hooked) {
+            try {
+                val dispatch = cls.getDeclaredMethod(
+                    "dispatchTouchEvent",
+                    MotionEvent::class.java
+                )
+                hook(dispatch).intercept { chain ->
+                    val event = chain.getArg(0) as? MotionEvent
+                    if (event != null) trackTrendTouch(event, target.context)
+                    chain.proceed()
+                }
+                hooked = true
+                Log.i(TAG, "TrendTag: dispatch hook installed (${cls.name})")
+            } catch (e: Throwable) {
+                trendTouchHookedClasses.remove(cls.name)
+                Log.w(TAG, "TrendTag: dispatch hook failed: ${e.message}")
+            }
+        }
+        if (!hooked) {
+            target.setOnTouchListener { _, event ->
+                trackTrendTouch(event, target.context)
+                false
+            }
+            Log.i(TAG, "TrendTag: touch listener attached to ${cls.name}")
+        }
+    }
+
+    private fun findComposeTouchTarget(root: View): View? {
+        if (root is ViewGroup) {
+            for (i in 0 until root.childCount) {
+                val child = root.getChildAt(i)
+                if (child is ViewGroup) return child
+                findComposeTouchTarget(child)?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun activityFromCallback(callback: Any): Activity? {
+        for (field in callback.javaClass.declaredFields) {
+            try {
+                field.isAccessible = true
+                val value = field.get(callback) ?: continue
+                if (value is Activity) return value
+                runCatching {
+                    value.javaClass.getMethod("requireActivity").invoke(value) as? Activity
+                }.getOrNull()?.let { return it }
+                runCatching {
+                    value.javaClass.getMethod("getActivity").invoke(value) as? Activity
+                }.getOrNull()?.let { return it }
+                if (value is Context) {
+                    value.findActivity()?.let { return it }
+                }
+            } catch (_: Throwable) {
+            }
+        }
+        return null
     }
 
     private fun trackTrendTouch(event: MotionEvent, context: Context?) {
@@ -1399,6 +1581,8 @@ class ModuleMain : XposedModule() {
 
     private var cachedApplication: Application? = null
     private val trendTagWorks = ConcurrentHashMap<String, Any>()
+    private var thumbnailModelClass: Class<*>? = null
+    private val trendTouchHookedClasses = mutableSetOf<String>()
     private var trendLongPress = false
     private var trendDownAt = 0L
     private var trendDownX = 0f
