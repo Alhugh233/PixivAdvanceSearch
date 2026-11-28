@@ -362,7 +362,7 @@ private fun TrendTagDialogContent(
 private fun moduleVersion(context: Context): String {
     return runCatching {
         context.packageManager.getPackageInfo(MODULE_PACKAGE, 0).versionName
-    }.getOrNull()?.takeIf { it.isNotBlank() } ?: "1.3"
+    }.getOrNull()?.takeIf { it.isNotBlank() } ?: "1.4"
 }
 
 @Composable
