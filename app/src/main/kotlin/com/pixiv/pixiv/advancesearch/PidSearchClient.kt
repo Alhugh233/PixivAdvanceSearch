@@ -25,7 +25,23 @@ internal data class PidSearchResult(
     val id: Long,
     val title: String,
     val subtitle: String,
-    val userId: Long? = null
+    val userId: Long? = null,
+    val thumbnailUrl: String? = null,
+    val itemCount: Int? = null,
+    val userInfo: PidUserInfo? = null
+)
+
+internal data class PidUserInfo(
+    val avatarUrl: String?,
+    val name: String,
+    val account: String,
+    val comment: String,
+    val totalIllusts: Int,
+    val totalManga: Int,
+    val totalNovels: Int,
+    val totalFollowUsers: Int,
+    val totalIllustSeries: Int,
+    val isPremium: Boolean
 )
 
 internal class PidSearchException(message: String) : Exception(message)
@@ -71,7 +87,9 @@ internal object PidSearchClient {
             target = PidTarget.ILLUST,
             id = id,
             title = illust.optString("title").trim(),
-            subtitle = userSubtitle(user)
+            subtitle = userSubtitle(user),
+            userId = user?.optLong("id")?.takeIf { it > 0L },
+            thumbnailUrl = previewUrl(illust)
         )
     }
 
@@ -84,7 +102,9 @@ internal object PidSearchClient {
             target = PidTarget.NOVEL,
             id = id,
             title = novel.optString("title").trim(),
-            subtitle = userSubtitle(user)
+            subtitle = userSubtitle(user),
+            userId = user?.optLong("id")?.takeIf { it > 0L },
+            thumbnailUrl = previewUrl(novel)
         )
     }
 
@@ -97,11 +117,14 @@ internal object PidSearchClient {
         val id = user.optLong("id", pid)
         val name = user.optString("name").trim()
         val account = user.optString("account").trim()
+        val profile = root.optJSONObject("profile")
         return PidSearchResult(
             target = PidTarget.USER,
             id = id,
-            title = name,
-            subtitle = if (account.isBlank()) "" else "@$account"
+            title = name.ifBlank { "PID $id" },
+            subtitle = if (account.isBlank()) "" else "@$account",
+            userId = id,
+            userInfo = parseUserInfo(user, profile)
         )
     }
 
@@ -117,7 +140,13 @@ internal object PidSearchClient {
             target = PidTarget.ILLUST_SERIES,
             id = id,
             title = series.optString("title").trim(),
-            subtitle = userSubtitle(user)
+            subtitle = userSubtitle(user),
+            userId = user?.optLong("id")?.takeIf { it > 0L },
+            thumbnailUrl = imageUrl(
+                series.optJSONObject("cover_image_urls"),
+                "medium"
+            ),
+            itemCount = series.optInt("series_work_count").takeIf { it > 0 }
         )
     }
 
@@ -126,13 +155,50 @@ internal object PidSearchClient {
         val series = root.optJSONObject("novel_series_detail") ?: return null
         val id = series.optLong("id", pid)
         val user = series.optJSONObject("user")
+        val latest = root.optJSONObject("novel_series_latest_novel")
+        val firstNovel = root.optJSONArray("novels")?.optJSONObject(0)
         return PidSearchResult(
             target = PidTarget.NOVEL_SERIES,
             id = id,
             title = series.optString("title").trim(),
             subtitle = userSubtitle(user),
-            userId = user?.optLong("id")?.takeIf { it > 0L }
+            userId = user?.optLong("id")?.takeIf { it > 0L },
+            thumbnailUrl = previewUrl(latest) ?: previewUrl(firstNovel),
+            itemCount = series.optInt("content_count").takeIf { it > 0 }
         )
+    }
+
+    private fun parseUserInfo(user: JSONObject?, profile: JSONObject?): PidUserInfo? {
+        if (user == null) return null
+        return PidUserInfo(
+            avatarUrl = imageUrl(
+                user.optJSONObject("profile_image_urls"),
+                "medium",
+                "px_170x170",
+                "px_64x64"
+            ),
+            name = user.optString("name").trim(),
+            account = user.optString("account").trim(),
+            comment = user.optString("comment").trim(),
+            totalIllusts = profile?.optInt("total_illusts") ?: 0,
+            totalManga = profile?.optInt("total_manga") ?: 0,
+            totalNovels = profile?.optInt("total_novels") ?: 0,
+            totalFollowUsers = profile?.optInt("total_follow_users") ?: 0,
+            totalIllustSeries = profile?.optInt("total_illust_series") ?: 0,
+            isPremium = profile?.optBoolean("is_premium") ?: false
+        )
+    }
+
+    private fun previewUrl(work: JSONObject?): String? =
+        imageUrl(work?.optJSONObject("image_urls"), "square_medium", "medium", "large")
+
+    private fun imageUrl(obj: JSONObject?, vararg keys: String): String? {
+        if (obj == null) return null
+        for (key in keys) {
+            val value = obj.optString(key).trim()
+            if (value.isNotEmpty()) return value
+        }
+        return null
     }
 
     private fun userSubtitle(user: JSONObject?): String {

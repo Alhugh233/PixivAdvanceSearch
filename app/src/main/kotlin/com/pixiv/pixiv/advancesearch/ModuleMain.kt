@@ -1668,7 +1668,14 @@ class ModuleMain : XposedModule() {
                         context,
                         R.string.pid_type_novel_series,
                         "Novel series"
-                    )
+                    ),
+                    userStats = str(
+                        context,
+                        R.string.pid_user_stats,
+                        "Illust %1\$d · Manga %2\$d · Novel %3\$d · Following %4\$d"
+                    ),
+                    premium = str(context, R.string.pid_premium, "Premium"),
+                    itemCount = str(context, R.string.pid_item_count, "%1\$d item(s)")
                 ),
                 onOpen = { target, pid, userId -> openPidTarget(activity, target, pid, userId) },
                 onInvalid = { toast(activity, str(activity, R.string.invalid_pid, "Invalid PID")) }

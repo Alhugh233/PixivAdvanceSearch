@@ -46,6 +46,9 @@
     <string name="settings_blur_detail_title">Blur R18 detail previews</string>
     <string name="settings_blur_detail_desc">Blur R18/R18G preview images on work detail pages.</string>
     <string name="settings_blur_radius">Blur radius</string>
+    <string name="pid_user_stats">Illust %1$d · Manga %2$d · Novel %3$d · Following %4$d</string>
+    <string name="pid_premium">Premium</string>
+    <string name="pid_item_count">%1$d item(s)</string>
     <string name="settings_pid_title">PID search</string>
     <string name="settings_pid_desc">PID segment on the search page and the all-type PID search page.</string>
     <string name="settings_sidebar_title">Module settings entry</string>

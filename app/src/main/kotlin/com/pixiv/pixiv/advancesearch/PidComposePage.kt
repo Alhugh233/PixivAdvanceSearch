@@ -8,7 +8,10 @@ import android.content.res.Resources
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -40,19 +44,27 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -116,7 +128,10 @@ internal data class PidUiStrings(
     val typeNovel: String,
     val typeUser: String,
     val typeIllustSeries: String,
-    val typeNovelSeries: String
+    val typeNovelSeries: String,
+    val userStats: String,
+    val premium: String,
+    val itemCount: String
 )
 
 private class ModuleComposeContext(
@@ -395,6 +410,8 @@ private fun PidResultCard(
     strings: PidUiStrings,
     onOpen: (PidTarget, Long, Long?) -> Unit
 ) {
+    val info = result.userInfo
+    val isUser = result.target == PidTarget.USER
     Card(
         onClick = { onOpen(result.target, result.id, result.userId) },
         shape = MaterialTheme.shapes.large,
@@ -403,34 +420,161 @@ private fun PidResultCard(
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                text = targetLabel(result.target, strings),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            PidThumbnail(
+                url = if (isUser) info?.avatarUrl else result.thumbnailUrl,
+                size = if (isUser) 72.dp else 88.dp,
+                shape = if (isUser) CircleShape else RoundedCornerShape(16.dp),
+                fallback = (if (isUser) info?.name else result.title)
+                    ?.trim()
+                    ?.take(1)
+                    ?.ifBlank { "?" }
+                    ?: "?"
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = result.title.ifBlank { "PID ${result.id}" },
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (result.subtitle.isNotBlank()) {
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = targetLabel(result.target, strings),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (isUser && info?.isPremium == true) {
+                        Spacer(Modifier.width(6.dp))
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                text = strings.premium,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(
+                                    horizontal = 6.dp,
+                                    vertical = 2.dp
+                                )
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = result.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    text = result.title.ifBlank { "PID ${result.id}" },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (result.subtitle.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = result.subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (isUser && info != null) {
+                    if (info.comment.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = info.comment,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = String.format(
+                            Locale.getDefault(),
+                            strings.userStats,
+                            info.totalIllusts,
+                            info.totalManga,
+                            info.totalNovels,
+                            info.totalFollowUsers
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                val itemCount = result.itemCount
+                if (!isUser && itemCount != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = String.format(
+                            Locale.getDefault(),
+                            strings.itemCount,
+                            itemCount
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "PID ${result.id}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "PID ${result.id}",
-                style = MaterialTheme.typography.labelSmall,
+        }
+    }
+}
+
+@Composable
+private fun PidThumbnail(
+    url: String?,
+    size: Dp,
+    shape: Shape,
+    fallback: String
+) {
+    val density = LocalDensity.current
+    val targetPx = with(density) { size.roundToPx() }
+    var bitmap by remember(url, targetPx) {
+        mutableStateOf(PidImageLoader.peek(url))
+    }
+    var loading by remember(url, targetPx) {
+        mutableStateOf(url != null && bitmap == null)
+    }
+    LaunchedEffect(url, targetPx) {
+        if (url != null && bitmap == null) {
+            bitmap = PidImageLoader.load(url, targetPx)
+        }
+        loading = false
+    }
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        val image = bitmap
+        when {
+            image != null -> Image(
+                bitmap = image.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            loading -> CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
+            else -> Text(
+                text = fallback,
+                style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }

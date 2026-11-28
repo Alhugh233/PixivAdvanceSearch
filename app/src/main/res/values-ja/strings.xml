@@ -45,6 +45,9 @@
     <string name="settings_blur_detail_title">詳細プレビューをぼかす</string>
     <string name="settings_blur_detail_desc">作品詳細の R18/R18G プレビュー画像をぼかします。</string>
     <string name="settings_blur_radius">ぼかし半径</string>
+    <string name="pid_user_stats">イラスト %1$d · マンガ %2$d · 小説 %3$d · フォロー %4$d</string>
+    <string name="pid_premium">プレミアム</string>
+    <string name="pid_item_count">%1$d件</string>
     <string name="settings_pid_title">PID 検索</string>
     <string name="settings_pid_desc">検索ページの PID セグメントと全種類 PID 検索ページ。</string>
     <string name="settings_sidebar_title">モジュール設定入口</string>
