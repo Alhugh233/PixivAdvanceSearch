@@ -12,6 +12,7 @@ import android.content.res.AssetManager
 import android.content.res.Configuration
 import android.content.res.Resources
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Typeface
@@ -28,6 +29,8 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewConfiguration
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeProvider
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
@@ -659,6 +662,9 @@ class ModuleMain : XposedModule() {
                         val work = chain.getArg(1)
                         if (tag != null && work != null) {
                             trendTagWorks[tag] = work
+                            if (trendTagWorks.size <= 5) {
+                                Log.i(TAG, "TrendTag: map += $tag")
+                            }
                         }
                         result
                     }
@@ -686,10 +692,24 @@ class ModuleMain : XposedModule() {
                             trendSearchBypass = false
                             return@intercept chain.proceed()
                         }
-                        if (!trendLongPress || !trendTagWorks.containsKey(tag)) {
+                        if (!trendLongPress) {
+                            // A second callback arriving shortly after the dialog
+                            // was opened is the same long press; swallow it.
+                            if (tag == trendHandledTag &&
+                                SystemClock.uptimeMillis() - trendHandledAt < 1000L
+                            ) {
+                                return@intercept null
+                            }
+                            return@intercept chain.proceed()
+                        }
+                        if (!trendTagWorks.containsKey(tag)) {
+                            Log.i(TAG, "TrendTag: long press tag=$tag not in map")
                             return@intercept chain.proceed()
                         }
                         trendLongPress = false
+                        trendHandledTag = tag
+                        trendHandledAt = SystemClock.uptimeMillis()
+                        Log.i(TAG, "TrendTag: showing dialog tag=$tag")
 
                         val callback = chain.thisObject
                         val activity = activityFromCallback(callback)
@@ -941,8 +961,15 @@ class ModuleMain : XposedModule() {
                 )
                 hook(dispatch).intercept { chain ->
                     val event = chain.getArg(0) as? MotionEvent
-                    if (event != null) trackTrendTouch(event, target.context)
-                    chain.proceed()
+                    val longPress = event != null &&
+                        trackTrendTouch(event, target.context)
+                    val x = event?.rawX
+                    val y = event?.rawY
+                    val result = chain.proceed()
+                    if (longPress && trendLongPress && x != null && y != null) {
+                        target.post { triggerTrendTagLongPress(target, x, y) }
+                    }
+                    result
                 }
                 hooked = true
                 Log.i(TAG, "TrendTag: dispatch hook installed (${cls.name})")
@@ -953,7 +980,12 @@ class ModuleMain : XposedModule() {
         }
         if (!hooked) {
             target.setOnTouchListener { _, event ->
-                trackTrendTouch(event, target.context)
+                val longPress = trackTrendTouch(event, target.context)
+                if (longPress) {
+                    val x = event.rawX
+                    val y = event.rawY
+                    target.post { triggerTrendTagLongPress(target, x, y) }
+                }
                 false
             }
             Log.i(TAG, "TrendTag: touch listener attached to ${cls.name}")
@@ -1000,7 +1032,7 @@ class ModuleMain : XposedModule() {
         return null
     }
 
-    private fun trackTrendTouch(event: MotionEvent, context: Context?) {
+    private fun trackTrendTouch(event: MotionEvent, context: Context?): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 trendLongPress = false
@@ -1019,11 +1051,173 @@ class ModuleMain : XposedModule() {
                     } ?: 24f
                     if (dx * dx + dy * dy <= slop * slop) {
                         trendLongPress = true
+                        Log.i(TAG, "TrendTag: long press detected")
+                        return true
                     }
                 }
             }
             MotionEvent.ACTION_CANCEL -> trendLongPress = false
         }
+        return false
+    }
+
+    /**
+     * Compose's clickable does not deliver onClick after a long press, so the
+     * normal callback is never invoked. Resolve the tag under the finger through
+     * the accessibility tree, then replay the click semantics action; the hooked
+     * trend-tag callback sees trendLongPress == true and opens the dialog.
+     */
+    private fun triggerTrendTagLongPress(view: View, screenX: Float, screenY: Float) {
+        if (SystemClock.uptimeMillis() - trendHandledAt < 1000L) return
+        val tags = trendTagWorks.keys
+        if (tags.isEmpty()) {
+            Log.i(TAG, "TrendTag: long press, tag map empty")
+            return
+        }
+        val provider = try {
+            view.accessibilityNodeProvider
+        } catch (_: Throwable) {
+            null
+        }
+        val root = try {
+            provider?.createAccessibilityNodeInfo(
+                AccessibilityNodeProvider.HOST_VIEW_ID
+            )
+        } catch (_: Throwable) {
+            null
+        } ?: try {
+            view.createAccessibilityNodeInfo()
+        } catch (e: Throwable) {
+            Log.w(TAG, "TrendTag: accessibility lookup failed: ${e.message}")
+            null
+        }
+        val hit = try {
+            findTrendTagNode(
+                provider,
+                root,
+                AccessibilityNodeProvider.HOST_VIEW_ID,
+                screenX.toInt(),
+                screenY.toInt(),
+                tags
+            )
+        } catch (e: Throwable) {
+            Log.w(TAG, "TrendTag: accessibility walk failed: ${e.message}")
+            null
+        }
+        if (hit == null) {
+            Log.i(TAG, "TrendTag: long press, no tag node at $screenX,$screenY")
+            return
+        }
+        val text = accessibilityText(provider, hit.first)
+        val clicked = try {
+            if (provider != null && hit.second != AccessibilityNodeProvider.HOST_VIEW_ID) {
+                provider.performAction(
+                    hit.second,
+                    AccessibilityNodeInfo.ACTION_CLICK,
+                    null
+                )
+            } else {
+                hit.first.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "TrendTag: click action failed: ${e.message}")
+            false
+        }
+        Log.i(TAG, "TrendTag: long press node=\"$text\" click=$clicked")
+    }
+
+    private fun findTrendTagNode(
+        provider: AccessibilityNodeProvider?,
+        node: AccessibilityNodeInfo?,
+        virtualId: Int,
+        x: Int,
+        y: Int,
+        tags: Set<String>
+    ): Pair<AccessibilityNodeInfo, Int>? {
+        if (node == null) return null
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (node.isClickable && bounds.contains(x, y)) {
+            val text = accessibilityText(provider, node)
+            if (matchesTrendTag(text, tags)) return node to virtualId
+        }
+        for (i in 0 until node.childCount) {
+            val childId = getAccessibilityChildId(node, i)
+            val child = if (provider != null && childId != null) {
+                try {
+                    provider.createAccessibilityNodeInfo(childId)
+                } catch (_: Throwable) {
+                    null
+                }
+            } else {
+                null
+            } ?: node.getChild(i)
+            findTrendTagNode(
+                provider,
+                child,
+                childId ?: View.NO_ID,
+                x,
+                y,
+                tags
+            )?.let { return it }
+        }
+        return null
+    }
+
+    private fun accessibilityText(
+        provider: AccessibilityNodeProvider?,
+        node: AccessibilityNodeInfo?,
+        depth: Int = 0
+    ): String {
+        if (node == null || depth > 8) return ""
+        val out = StringBuilder()
+        node.text?.let { out.append(it).append(' ') }
+        node.contentDescription?.let { out.append(it).append(' ') }
+        for (i in 0 until node.childCount) {
+            val childId = getAccessibilityChildId(node, i)
+            val child = if (provider != null && childId != null) {
+                runCatching {
+                    provider.createAccessibilityNodeInfo(childId)
+                }.getOrNull()
+            } else {
+                null
+            } ?: node.getChild(i)
+            out.append(accessibilityText(provider, child, depth + 1))
+        }
+        return out.toString()
+    }
+
+    private fun getAccessibilityChildId(
+        node: AccessibilityNodeInfo,
+        index: Int
+    ): Int? {
+        return try {
+            HiddenApiBypass.invoke(
+                AccessibilityNodeInfo::class.java,
+                node,
+                "getChildId",
+                index
+            ) as? Int
+        } catch (_: Throwable) {
+            try {
+                val method = AccessibilityNodeInfo::class.java
+                    .getDeclaredMethod("getChildId", Int::class.javaPrimitiveType)
+                method.isAccessible = true
+                method.invoke(node, index) as? Int
+            } catch (_: Throwable) {
+                null
+            }
+        }
+    }
+
+    private fun matchesTrendTag(text: String, tags: Set<String>): Boolean {
+        if (text.isBlank()) return false
+        for (tag in tags) {
+            val clean = tag.trim()
+            if (clean.isNotEmpty() && text.contains("#$clean")) return true
+        }
+        val trimmed = text.trim()
+        return tags.any { it.trim().length >= 2 && trimmed == it.trim() }
     }
 
     private fun workId(work: Any): Long? {
@@ -1657,6 +1851,8 @@ class ModuleMain : XposedModule() {
     private var trendDownAt = 0L
     private var trendDownX = 0f
     private var trendDownY = 0f
+    private var trendHandledTag: String? = null
+    private var trendHandledAt = 0L
     private var trendSearchBypass = false
     private var trialPremiumLogged = false
     private var moduleRes: Resources? = null
