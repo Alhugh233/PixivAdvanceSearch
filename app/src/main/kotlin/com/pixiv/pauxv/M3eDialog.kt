@@ -1,4 +1,4 @@
-package com.pixiv.pixiv.advancesearch
+package com.pixiv.pauxv
 
 import android.app.Activity
 import android.app.Dialog

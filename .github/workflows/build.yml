@@ -57,14 +57,14 @@ jobs:
         run: |
           APK_PATH="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print -quit)"
           test -n "$APK_PATH"
-          cp "$APK_PATH" PixivAdvanceSearch.apk
-          ls -lh PixivAdvanceSearch.apk
+          cp "$APK_PATH" PAuxiliary.apk
+          ls -lh PAuxiliary.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           # v7 supports non-zipped single-file artifacts.
           # The artifact name becomes the file name; `name` is ignored.
-          path: PixivAdvanceSearch.apk
+          path: PAuxiliary.apk
           archive: false
           if-no-files-found: error

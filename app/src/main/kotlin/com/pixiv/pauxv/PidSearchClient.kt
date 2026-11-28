@@ -1,4 +1,4 @@
-package com.pixiv.pixiv.advancesearch
+package com.pixiv.pauxv
 
 import android.accounts.AccountManager
 import android.annotation.SuppressLint
@@ -67,7 +67,7 @@ internal object PidSearchClient {
         addResult(results, queryUser(headers, pid))
         addResult(results, queryIllustSeries(headers, pid))
         addResult(results, queryNovelSeries(headers, pid))
-        android.util.Log.i("PixivAdvanceSearch", "PID search $pid: ${results.size} result(s)")
+        android.util.Log.i("PAuxiliary", "PID search $pid: ${results.size} result(s)")
         return results
     }
 

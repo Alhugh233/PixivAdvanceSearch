@@ -1,6 +1,6 @@
 # Third-party notices
 
-PixivAdvanceSearch includes the following third-party open source projects.
+PAuxiliary includes the following third-party open source projects.
 The full Apache License 2.0 text is available in [LICENSE](LICENSE).
 
 ## libxposed

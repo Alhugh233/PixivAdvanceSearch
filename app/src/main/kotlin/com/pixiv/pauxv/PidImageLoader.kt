@@ -1,4 +1,4 @@
-package com.pixiv.pixiv.advancesearch
+package com.pixiv.pauxv
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory

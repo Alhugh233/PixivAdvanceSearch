@@ -1,6 +1,6 @@
-# PixivAdvanceSearch
+# PAuxiliary
 
-适用于 [Pixiv](https://play.google.com/store/apps/details?id=jp.pxv.android) (jp.pxv.android) 的 LSPosed 模块。
+PAuxiliary 是适用于 [Pixiv](https://play.google.com/store/apps/details?id=jp.pxv.android) (jp.pxv.android) 的 LSPosed 辅助模块。
 
 > **注意**：本模块基于 Vibe Coding 开发，代码质量参差不齐，请谨慎使用。
 

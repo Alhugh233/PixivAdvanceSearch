@@ -1,4 +1,4 @@
-package com.pixiv.pixiv.advancesearch
+package com.pixiv.pauxv
 
 import android.app.Activity
 import android.app.Application
@@ -231,7 +231,7 @@ internal fun createPidComposeView(
     }
 
     android.util.Log.i(
-        "PixivAdvanceSearch",
+        "PAuxiliary",
         "PID: ComposeView classloader=${ComposeView::class.java.classLoader}"
     )
 
@@ -303,7 +303,7 @@ private fun PidScreen(
                 searched = true
                 outcome.onSuccess { results = it }
                     .onFailure {
-                        android.util.Log.e("PixivAdvanceSearch", "PID search failed", it)
+                        android.util.Log.e("PAuxiliary", "PID search failed", it)
                         error = it.message ?: it.javaClass.simpleName
                     }
             }

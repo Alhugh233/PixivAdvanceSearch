@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.pixiv.pixiv.advancesearch"
+    namespace = "com.pixiv.pauxv"
     compileSdk {
         version = release(37) {
             minorApiLevel = 1
@@ -14,7 +14,7 @@ android {
     buildToolsVersion = "37.0.0"
 
     defaultConfig {
-        applicationId = "com.pixiv.pixiv.advancesearch"
+        applicationId = "com.pixiv.pauxv"
         minSdk = 28
         targetSdk = 34
         versionCode = 4

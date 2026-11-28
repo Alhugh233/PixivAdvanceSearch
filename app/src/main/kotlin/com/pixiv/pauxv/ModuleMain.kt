@@ -1,4 +1,4 @@
-package com.pixiv.pixiv.advancesearch
+package com.pixiv.pauxv
 
 import android.accounts.AccountManager
 import android.app.Activity
@@ -57,7 +57,7 @@ import java.util.concurrent.ConcurrentHashMap
 class ModuleMain : XposedModule() {
 
     companion object {
-        private const val TAG = "PixivAdvanceSearch"
+        private const val TAG = "PAuxiliary"
         private const val PIXIV = "jp.pxv.android"
         private const val MAIN_ACTIVITY = "jp.pxv.android.MainActivity"
         private const val ILLUST_ACTIVITY = "jp.pxv.android.feature.illustviewer.detail.IllustDetailSingleActivity"

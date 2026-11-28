@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">PixivAdvanceSearch</string>
+    <string name="app_name">PAuxiliary</string>
     <string name="pid_button">PID</string>
     <string name="pid_search_title">PID 搜索</string>
     <string name="pid_hint">输入 PID（作品/用户/系列 ID）</string>

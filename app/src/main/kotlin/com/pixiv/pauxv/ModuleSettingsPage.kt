@@ -1,4 +1,4 @@
-package com.pixiv.pixiv.advancesearch
+package com.pixiv.pauxv
 
 import android.app.Activity
 import android.app.Application
@@ -74,7 +74,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import kotlin.math.roundToInt
 
-private const val MODULE_PACKAGE = "com.pixiv.pixiv.advancesearch"
+private const val MODULE_PACKAGE = "com.pixiv.pauxv"
 
 internal val SettingsLightColors = lightColorScheme(
     primary = Color(0xFF00639B),
@@ -562,7 +562,7 @@ private fun AboutScreen(version: String, modifier: Modifier = Modifier) {
             .padding(24.dp)
     ) {
         Text(
-            text = "PixivAdvanceSearch",
+            text = "PAuxiliary",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )

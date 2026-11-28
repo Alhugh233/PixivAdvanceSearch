@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PixivAdvanceSearch"
+rootProject.name = "PAuxiliary"
 
 include(":app")
