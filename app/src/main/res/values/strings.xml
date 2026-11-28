@@ -13,6 +13,8 @@
     <string name="pid_search_empty">No matching PID found.</string>
     <string name="pid_search_failed">Search failed: %1$s</string>
     <string name="pid_fallback_hint">You can still open a type directly:</string>
+    <string name="pid_direct_open">Direct open</string>
+    <string name="pid_select_type">Select a type</string>
     <string name="pid_type_illust">Illust / Manga</string>
     <string name="pid_type_novel">Novel</string>
     <string name="pid_type_user">User</string>

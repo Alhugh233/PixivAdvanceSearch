@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,6 +41,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -131,7 +134,10 @@ internal data class PidUiStrings(
     val typeNovelSeries: String,
     val userStats: String,
     val premium: String,
-    val itemCount: String
+    val itemCount: String,
+    val directOpen: String,
+    val selectType: String,
+    val cancel: String
 )
 
 private class ModuleComposeContext(
@@ -275,6 +281,8 @@ private fun PidScreen(
     var searched by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<PidSearchResult>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    var directOpen by remember { mutableStateOf(false) }
+    var directPid by remember { mutableStateOf<Long?>(null) }
     val handler = remember { Handler(Looper.getMainLooper()) }
 
     fun search() {
@@ -358,6 +366,24 @@ private fun PidScreen(
                     Text(strings.search)
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    val value = pid.trim().toLongOrNull()
+                    if (value == null || value <= 0L) {
+                        onInvalid()
+                    } else {
+                        directPid = value
+                        directOpen = true
+                    }
+                },
+                shape = MaterialTheme.shapes.large,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+            ) {
+                Text(strings.directOpen)
+            }
             Spacer(Modifier.height(20.dp))
 
             val currentError = error
@@ -401,8 +427,75 @@ private fun PidScreen(
                 }
             }
         }
+        if (directOpen) {
+            val targetPid = directPid
+            if (targetPid != null) {
+                DirectOpenDialog(
+                    strings = strings,
+                    pid = targetPid,
+                    onDismiss = { directOpen = false },
+                    onSelect = { target ->
+                        directOpen = false
+                        onOpen(target, targetPid, null)
+                    }
+                )
+            }
+        }
     }
 }
+
+@Composable
+private fun DirectOpenDialog(
+    strings: PidUiStrings,
+    pid: Long,
+    onDismiss: () -> Unit,
+    onSelect: (PidTarget) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("${strings.directOpen} · PID $pid") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = strings.selectType,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                pidTargets(strings).forEach { (target, label) ->
+                    TextButton(
+                        onClick = { onSelect(target) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = label,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(strings.cancel)
+            }
+        }
+    )
+}
+
+private fun pidTargets(strings: PidUiStrings): List<Pair<PidTarget, String>> =
+    listOf(
+        PidTarget.ILLUST to strings.typeIllust,
+        PidTarget.NOVEL to strings.typeNovel,
+        PidTarget.USER to strings.typeUser,
+        PidTarget.ILLUST_SERIES to strings.typeIllustSeries,
+        PidTarget.NOVEL_SERIES to strings.typeNovelSeries
+    )
 
 @Composable
 private fun PidResultCard(
@@ -587,14 +680,7 @@ private fun PidFallbackButtons(
     strings: PidUiStrings,
     onOpen: (PidTarget, Long, Long?) -> Unit
 ) {
-    val targets = listOf(
-        PidTarget.ILLUST to strings.typeIllust,
-        PidTarget.NOVEL to strings.typeNovel,
-        PidTarget.USER to strings.typeUser,
-        PidTarget.ILLUST_SERIES to strings.typeIllustSeries,
-        PidTarget.NOVEL_SERIES to strings.typeNovelSeries
-    )
-    targets.forEach { (target, label) ->
+    pidTargets(strings).forEach { (target, label) ->
         OutlinedButton(
             onClick = { onOpen(target, pid, null) },
             shape = MaterialTheme.shapes.large,

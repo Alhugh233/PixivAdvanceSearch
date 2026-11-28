@@ -12,6 +12,8 @@
     <string name="pid_search_empty">一致する PID が見つかりません。</string>
     <string name="pid_search_failed">検索に失敗しました：%1$s</string>
     <string name="pid_fallback_hint">種類を直接選んで開くこともできます：</string>
+    <string name="pid_direct_open">直接開く</string>
+    <string name="pid_select_type">種類を選択</string>
     <string name="pid_type_illust">イラスト / 漫画</string>
     <string name="pid_type_novel">小説</string>
     <string name="pid_type_user">ユーザー</string>

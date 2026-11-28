@@ -1675,7 +1675,10 @@ class ModuleMain : XposedModule() {
                         "Illust %1\$d · Manga %2\$d · Novel %3\$d · Following %4\$d"
                     ),
                     premium = str(context, R.string.pid_premium, "Premium"),
-                    itemCount = str(context, R.string.pid_item_count, "%1\$d item(s)")
+                    itemCount = str(context, R.string.pid_item_count, "%1\$d item(s)"),
+                    directOpen = str(context, R.string.pid_direct_open, "Direct open"),
+                    selectType = str(context, R.string.pid_select_type, "Select a type"),
+                    cancel = str(context, R.string.cancel, "Cancel")
                 ),
                 onOpen = { target, pid, userId -> openPidTarget(activity, target, pid, userId) },
                 onInvalid = { toast(activity, str(activity, R.string.invalid_pid, "Invalid PID")) }
