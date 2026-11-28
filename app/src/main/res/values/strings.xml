@@ -28,6 +28,10 @@
 
     <string name="display_settings">Display settings</string>
     <string name="module_settings">Module settings</string>
+    <string name="trend_tag_dialog_title">Tag: %1$s</string>
+    <string name="trend_tag_search">Search tag</string>
+    <string name="trend_tag_open_work">Open work</string>
+    <string name="trend_tag_work_info">Work info</string>
     <string name="settings_close">Close</string>
     <string name="settings_tab_config">Config</string>
     <string name="settings_tab_about">About</string>

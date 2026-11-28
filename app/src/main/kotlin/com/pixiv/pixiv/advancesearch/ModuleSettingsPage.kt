@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -29,6 +30,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MotionScheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Slider
@@ -236,6 +238,125 @@ internal fun showModuleSettings(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.MATCH_PARENT
     )
+}
+
+internal fun showTrendTagDialog(
+    activity: Activity,
+    hostContext: Context,
+    moduleResources: Resources,
+    tag: String,
+    hasWork: Boolean,
+    onSearch: () -> Unit,
+    onOpenWork: () -> Unit,
+    onWorkInfo: () -> Unit
+) {
+    val moduleContext = SettingsComposeContext(hostContext, moduleResources)
+    val owner = SettingsComposeOwner(activity)
+    val dialog = Dialog(activity, android.R.style.Theme_DeviceDefault_Dialog_NoActionBar)
+    val composeView = ComposeView(moduleContext).apply {
+        setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        setViewTreeLifecycleOwner(owner)
+        setViewTreeSavedStateRegistryOwner(owner)
+        setViewTreeViewModelStoreOwner(owner)
+        setContent {
+            CompositionLocalProvider(
+                LocalContext provides moduleContext,
+                LocalResources provides moduleResources
+            ) {
+                ModuleSettingsTheme {
+                    TrendTagDialogContent(
+                        tag = tag,
+                        hasWork = hasWork,
+                        onDismiss = { dialog.dismiss() },
+                        onSearch = onSearch,
+                        onOpenWork = onOpenWork,
+                        onWorkInfo = onWorkInfo
+                    )
+                }
+            }
+        }
+    }
+    dialog.setContentView(composeView)
+    dialog.setCanceledOnTouchOutside(true)
+    dialog.window?.let { window ->
+        window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+        window.setDimAmount(0.45f)
+        window.decorView?.let { root ->
+            root.setViewTreeLifecycleOwner(owner)
+            root.setViewTreeSavedStateRegistryOwner(owner)
+            root.setViewTreeViewModelStoreOwner(owner)
+        }
+    }
+    dialog.setOnDismissListener { owner.dispose() }
+    dialog.show()
+    dialog.window?.setLayout(
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+    )
+}
+
+@Composable
+private fun TrendTagDialogContent(
+    tag: String,
+    hasWork: Boolean,
+    onDismiss: () -> Unit,
+    onSearch: () -> Unit,
+    onOpenWork: () -> Unit,
+    onWorkInfo: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.width(320.dp),
+        shape = MaterialTheme.shapes.large,
+        tonalElevation = 6.dp,
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Text(
+                text = stringResource(R.string.trend_tag_dialog_title, tag),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = {
+                    onDismiss()
+                    onSearch()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.trend_tag_search))
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    onDismiss()
+                    onOpenWork()
+                },
+                enabled = hasWork,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.trend_tag_open_work))
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    onDismiss()
+                    onWorkInfo()
+                },
+                enabled = hasWork,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.trend_tag_work_info))
+            }
+            Spacer(Modifier.height(4.dp))
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    }
 }
 
 private fun moduleVersion(context: Context): String {

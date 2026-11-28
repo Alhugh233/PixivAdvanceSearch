@@ -17,14 +17,17 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.SystemClock
 import android.text.InputType
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewConfiguration
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
@@ -43,6 +46,7 @@ import org.luckypray.dexkit.query.enums.StringMatchType
 import java.io.Serializable
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.util.concurrent.ConcurrentHashMap
 
 class ModuleMain : XposedModule() {
 
@@ -124,6 +128,7 @@ class ModuleMain : XposedModule() {
         // R18 / R18G / AI-generated badges on illust covers.
         installSpecialBadge(cl, bridge)
         installDetailBlur(cl)
+        installTrendTagLongPress(cl)
 
         if (bridge != null && bridge.isValid) {
             installTrialHook(bridge, cl)
@@ -620,6 +625,158 @@ class ModuleMain : XposedModule() {
         } catch (e: Throwable) {
             Log.e(TAG, "Blur: $className hook failed", e)
         }
+    }
+
+    // ================================================================
+    // Search trend tags — long press for Compose actions
+    // ================================================================
+
+    private fun installTrendTagLongPress(classLoader: ClassLoader) {
+        try {
+            val zgaClass = classLoader.loadClass("defpackage.zga")
+            val ctor = zgaClass.declaredConstructors.firstOrNull {
+                it.parameterTypes.size == 3 &&
+                    it.parameterTypes[0] == String::class.java &&
+                    it.parameterTypes[2] == String::class.java
+            }
+            if (ctor == null) {
+                Log.e(TAG, "TrendTag: zga constructor not found")
+            } else {
+                hook(ctor).intercept { chain ->
+                    val result = chain.proceed()
+                    val tag = chain.getArg(0) as? String
+                    val work = chain.getArg(1)
+                    if (tag != null && work != null) {
+                        trendTagWorks[tag] = work
+                    }
+                    result
+                }
+                Log.i(TAG, "TrendTag: data hook installed")
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "TrendTag: data hook failed", e)
+        }
+
+        try {
+            val composeView = classLoader.loadClass(
+                "androidx.compose.ui.platform.AndroidComposeView"
+            )
+            val dispatch = composeView.getDeclaredMethod(
+                "dispatchTouchEvent",
+                MotionEvent::class.java
+            )
+            hook(dispatch).intercept { chain ->
+                val event = chain.getArg(0) as? MotionEvent
+                val view = chain.thisObject as? View
+                if (event != null) trackTrendTouch(event, view?.context)
+                chain.proceed()
+            }
+            Log.i(TAG, "TrendTag: touch hook installed")
+        } catch (e: Throwable) {
+            Log.e(TAG, "TrendTag: touch hook failed", e)
+        }
+
+        try {
+            val u37Class = classLoader.loadClass("defpackage.u37")
+            val invoke = u37Class.getDeclaredMethod("invoke", Any::class.java)
+            hook(invoke).intercept { chain ->
+                val callback = chain.thisObject
+                val case = runCatching {
+                    u37Class.getField("a").getByte(callback)
+                }.getOrNull()
+                if (case != 17.toByte()) {
+                    return@intercept chain.proceed()
+                }
+                val tag = chain.getArg(0) as? String
+                if (tag == null) {
+                    return@intercept chain.proceed()
+                }
+                if (trendSearchBypass) {
+                    trendSearchBypass = false
+                    return@intercept chain.proceed()
+                }
+                if (!trendLongPress) {
+                    return@intercept chain.proceed()
+                }
+                trendLongPress = false
+
+                val fragment = runCatching {
+                    u37Class.getField("c").get(callback)
+                }.getOrNull()
+                val activity = fragment?.let {
+                    runCatching {
+                        it.javaClass.getMethod("requireActivity").invoke(it) as? Activity
+                    }.getOrNull()
+                }
+                val resources = activity?.let { moduleResources(it) }
+                if (activity == null || resources == null) {
+                    Log.w(TAG, "TrendTag: no activity/resources for dialog")
+                    return@intercept chain.proceed()
+                }
+                val work = trendTagWorks[tag]
+                showTrendTagDialog(
+                    activity = activity,
+                    hostContext = activity,
+                    moduleResources = resources,
+                    tag = tag,
+                    hasWork = work != null,
+                    onSearch = {
+                        try {
+                            trendSearchBypass = true
+                            invoke.invoke(callback, tag)
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "TrendTag: search failed", e)
+                        } finally {
+                            trendSearchBypass = false
+                        }
+                    },
+                    onOpenWork = {
+                        val id = work?.let { workId(it) }
+                        if (id != null) {
+                            openPid(activity, id, ILLUST_ACTIVITY, "ILLUST_ID")
+                        }
+                    },
+                    onWorkInfo = {
+                        work?.let { showWorkDetailDialog(activity, it) }
+                    }
+                )
+                null
+            }
+            Log.i(TAG, "TrendTag: long-press hook installed")
+        } catch (e: Throwable) {
+            Log.e(TAG, "TrendTag: long-press hook failed", e)
+        }
+    }
+
+    private fun trackTrendTouch(event: MotionEvent, context: Context?) {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                trendLongPress = false
+                trendDownAt = SystemClock.uptimeMillis()
+                trendDownX = event.x
+                trendDownY = event.y
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!trendLongPress &&
+                    SystemClock.uptimeMillis() - trendDownAt >= 500L
+                ) {
+                    val dx = event.x - trendDownX
+                    val dy = event.y - trendDownY
+                    val slop = context?.let {
+                        ViewConfiguration.get(it).scaledTouchSlop.toFloat()
+                    } ?: 24f
+                    if (dx * dx + dy * dy <= slop * slop) {
+                        trendLongPress = true
+                    }
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> trendLongPress = false
+        }
+    }
+
+    private fun workId(work: Any): Long? {
+        callS(work, "getId")?.toLongOrNull()?.let { return it }
+        return firstLong(work)?.toLongOrNull()
     }
 
     private fun readRestrict(model: Any): Int {
@@ -1241,6 +1398,12 @@ class ModuleMain : XposedModule() {
     // ================================================================
 
     private var cachedApplication: Application? = null
+    private val trendTagWorks = ConcurrentHashMap<String, Any>()
+    private var trendLongPress = false
+    private var trendDownAt = 0L
+    private var trendDownX = 0f
+    private var trendDownY = 0f
+    private var trendSearchBypass = false
     private var trialPremiumLogged = false
     private var moduleRes: Resources? = null
     private var moduleResConfig: Configuration? = null
@@ -1484,6 +1647,11 @@ class ModuleMain : XposedModule() {
     }
 
     private fun showWorkDetailDialog(dialog: DialogInterface, work: Any) {
+        val ctx = (dialog as? android.app.Dialog)?.context ?: return
+        showWorkDetailDialog(ctx, work)
+    }
+
+    private fun showWorkDetailDialog(ctx: Context, work: Any) {
         try {
             val workPid = callS(work, "getId") ?: firstLong(work) ?: "—"
             val title = callS(work, "getTitle") ?: firstString(work) ?: "—"
@@ -1494,7 +1662,6 @@ class ModuleMain : XposedModule() {
             Log.i(TAG, "WD: work=${work.javaClass.name} user=${user?.javaClass?.name} " +
                     "title=$title name=$userName workPid=$workPid userPid=$userPid")
 
-            val ctx = (dialog as? android.app.Dialog)?.context ?: return
             val body = str(
                 ctx, R.string.work_details_body,
                 "Title: %1\$s\nAuthor: %2\$s\nWork PID: %3\$s\nUser PID: %4\$s",

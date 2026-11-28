@@ -27,6 +27,10 @@
 
     <string name="display_settings">显示设置</string>
     <string name="module_settings">模块设置</string>
+    <string name="trend_tag_dialog_title">标签：%1$s</string>
+    <string name="trend_tag_search">搜索标签</string>
+    <string name="trend_tag_open_work">跳转作品</string>
+    <string name="trend_tag_work_info">作品信息</string>
     <string name="settings_close">关闭</string>
     <string name="settings_tab_config">配置</string>
     <string name="settings_tab_about">关于</string>

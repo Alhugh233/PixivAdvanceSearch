@@ -27,6 +27,10 @@
 
     <string name="display_settings">表示設定</string>
     <string name="module_settings">モジュール設定</string>
+    <string name="trend_tag_dialog_title">タグ：%1$s</string>
+    <string name="trend_tag_search">タグを検索</string>
+    <string name="trend_tag_open_work">作品を開く</string>
+    <string name="trend_tag_work_info">作品情報</string>
     <string name="settings_close">閉じる</string>
     <string name="settings_tab_config">設定</string>
     <string name="settings_tab_about">このモジュールについて</string>
