@@ -1,7 +1,9 @@
 package com.pixiv.pixiv.advancesearch
 
+import android.accounts.AccountManager
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Application
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.DialogInterface
@@ -1238,6 +1240,8 @@ class ModuleMain : XposedModule() {
     // Module resources / i18n
     // ================================================================
 
+    private var cachedApplication: Application? = null
+    private var trialPremiumLogged = false
     private var moduleRes: Resources? = null
     private var moduleResConfig: Configuration? = null
 
@@ -1721,6 +1725,41 @@ class ModuleMain : XposedModule() {
     // Trial bypass hooks
     // ================================================================
 
+    private fun currentApplication(): Application? {
+        cachedApplication?.let { return it }
+        val app = try {
+            val activityThread = Class.forName("android.app.ActivityThread")
+            HiddenApiBypass.invoke(
+                activityThread,
+                null,
+                "currentApplication"
+            ) as? Application
+        } catch (_: Throwable) {
+            try {
+                Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication")
+                    .invoke(null) as? Application
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        if (app != null) cachedApplication = app
+        return app
+    }
+
+    private fun isPremiumAccount(): Boolean {
+        val application = currentApplication() ?: return false
+        return try {
+            val accounts = AccountManager.get(application)
+            val account = accounts.getAccountsByType("net.pixiv").firstOrNull()
+                ?: return false
+            accounts.getUserData(account, "isPremium")
+                ?.equals("true", ignoreCase = true) == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     private fun installTrialHook(bridge: DexKitBridge, cl: ClassLoader) {
         // Strategy 1: string is more unique, try first
         var m = findMethodByStr(bridge, cl,
@@ -1748,9 +1787,20 @@ class ModuleMain : XposedModule() {
         // Strategy 3: direct lookup
         if (m == null) m = findMethodDirect(cl, "um9", "w", 0)
 
-        if (m != null) { hook(m).intercept { 0L }; deoptimize(m);
-            Log.i(TAG, "Trial: ${m.declaringClass.name}.${m.name}") }
-        else Log.e(TAG, "Trial FAILED")
+        if (m != null) {
+            hook(m).intercept { chain ->
+                val premium = isPremiumAccount()
+                if (!trialPremiumLogged) {
+                    trialPremiumLogged = true
+                    Log.i(TAG, "Trial: premium=$premium")
+                }
+                if (premium) chain.proceed() else 0L
+            }
+            deoptimize(m)
+            Log.i(TAG, "Trial: ${m.declaringClass.name}.${m.name}")
+        } else {
+            Log.e(TAG, "Trial FAILED")
+        }
     }
 
     private fun installAbTestHook(bridge: DexKitBridge, cl: ClassLoader) {
@@ -1823,7 +1873,16 @@ class ModuleMain : XposedModule() {
 
     private fun installTrialFallback(cl: ClassLoader) {
         findMethodDirect(cl, "um9", "w", 0)?.let {
-            hook(it).intercept { 0L }; deoptimize(it); Log.i(TAG, "Trial(fb): um9.w()")
+            hook(it).intercept { chain ->
+                val premium = isPremiumAccount()
+                if (!trialPremiumLogged) {
+                    trialPremiumLogged = true
+                    Log.i(TAG, "Trial: premium=$premium")
+                }
+                if (premium) chain.proceed() else 0L
+            }
+            deoptimize(it)
+            Log.i(TAG, "Trial(fb): um9.w()")
         } ?: Log.e(TAG, "Trial FB FAILED")
     }
 
