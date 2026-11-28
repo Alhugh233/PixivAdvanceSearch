@@ -9,3 +9,5 @@ Third-party dependencies:
 - DexKit — Apache 2.0 (dual-licensed under LGPL 3.0 / Apache 2.0)
 - AndroidHiddenApiBypass — Apache 2.0 (LSPosed)
   Copyright (C) 2021-2025 LSPosed
+- AndroidX / Jetpack Compose / Material Components — Apache 2.0
+  Copyright The Android Open Source Project and contributors

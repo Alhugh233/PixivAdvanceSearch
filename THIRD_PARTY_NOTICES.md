@@ -23,3 +23,17 @@ The full Apache License 2.0 text is available in [LICENSE](LICENSE).
 - Artifact: `org.lsposed.hiddenapibypass:hiddenapibypass`
 - License: Apache License 2.0
 - Copyright (C) 2021-2025 LSPosed
+
+## AndroidX / Jetpack Compose
+
+- Repositories: https://android.googlesource.com/platform/frameworks/support, https://github.com/androidx
+- Artifacts: `androidx.compose.*`, `androidx.lifecycle.*`, `androidx.savedstate.*`, `androidx.core:core-ktx`, `androidx.appcompat:appcompat`, `androidx.constraintlayout:constraintlayout`
+- License: Apache License 2.0
+- Copyright: The Android Open Source Project
+
+## Material Components for Android
+
+- Repository: https://github.com/material-components/material-components-android
+- Artifact: `com.google.android.material:material`
+- License: Apache License 2.0
+- Copyright: The Android Open Source Project and Material Components contributors
