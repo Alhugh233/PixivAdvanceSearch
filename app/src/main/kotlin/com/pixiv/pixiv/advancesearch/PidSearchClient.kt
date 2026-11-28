@@ -40,7 +40,10 @@ internal object PidSearchClient {
     fun search(context: Context, pid: Long): List<PidSearchResult> {
         val token = accessToken(context)
             ?: throw PidSearchException("No Pixiv login token")
-        val headers = requestHeaders(token)
+        val appVersion = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "6.205.0"
+        val headers = requestHeaders(token, appVersion)
 
         val results = ArrayList<PidSearchResult>(5)
         addResult(results, queryIllust(headers, pid))
@@ -184,15 +187,15 @@ internal object PidSearchClient {
         }
     }
 
-    private fun requestHeaders(token: String): Map<String, String> {
+    private fun requestHeaders(token: String, appVersion: String): Map<String, String> {
         val time = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZZZZZ", Locale.US).format(Date())
         val model = Build.MODEL.replace(Regex("[^\\x20-\\x7E]"), "?")
         return mapOf(
             "Authorization" to "Bearer $token",
-            "User-Agent" to "PixivAndroidApp/6.204.0 (Android ${Build.VERSION.RELEASE}; $model)",
+            "User-Agent" to "PixivAndroidApp/$appVersion (Android ${Build.VERSION.RELEASE}; $model)",
             "App-OS" to "android",
             "App-OS-Version" to Build.VERSION.RELEASE,
-            "App-Version" to "6.204.0",
+            "App-Version" to appVersion,
             "Accept-Language" to Locale.getDefault().toString(),
             "X-Client-Time" to time,
             "X-Client-Hash" to md5(time + CLIENT_HASH_SECRET),

@@ -69,8 +69,8 @@ class ModuleMain : XposedModule() {
             "jp.pxv.android.feature.search.searchresult.SearchResultActivity"
         private const val THUMBNAIL_VIEW =
             "jp.pxv.android.feature.commonlist.view.ThumbnailView"
-        private const val ILLUST_MODEL = "defpackage.ub7"
-        private const val RANKING_ITEM = "defpackage.w64"
+        private const val ILLUST_MODEL = "ce7"
+        private const val RANKING_ITEM = "d74"
         private const val ILLUST_CARD_ITEM_VIEW =
             "jp.pxv.android.feature.ranking.common.IllustCardItemView"
         private const val DETAIL_IMAGE_HOLDER =
@@ -164,7 +164,7 @@ class ModuleMain : XposedModule() {
     )
 
     private fun findSegmentClass(classLoader: ClassLoader, bridge: DexKitBridge?): Class<*>? {
-        // SegmentedLayout is unobfuscated in 6.204.0; DexKit is the safety net.
+        // SegmentedLayout is unobfuscated in 6.205.0; DexKit is the safety net.
         try {
             return classLoader.loadClass(SEARCH_SEGMENT_CLASS)
         } catch (e: Throwable) {
@@ -639,8 +639,7 @@ class ModuleMain : XposedModule() {
         }
         val modelClass = thumbnailModelClass
         if (modelClass == null) {
-            Log.e(TAG, "TrendTag: illust model class unavailable")
-            return
+            Log.w(TAG, "TrendTag: illust model class unavailable, using TrendTag marker only")
         }
 
         try {
@@ -649,10 +648,7 @@ class ModuleMain : XposedModule() {
                 Log.e(TAG, "TrendTag: data class not found")
             } else {
                 val ctor = dataClass.declaredConstructors.firstOrNull {
-                    it.parameterTypes.size == 3 &&
-                        it.parameterTypes[0] == String::class.java &&
-                        it.parameterTypes[1] == modelClass &&
-                        it.parameterTypes[2] == String::class.java
+                    isTrendTagConstructor(it, modelClass)
                 }
                 if (ctor == null) {
                     Log.e(TAG, "TrendTag: data constructor not found")
@@ -742,8 +738,26 @@ class ModuleMain : XposedModule() {
     private fun findTrendTagDataClass(
         bridge: DexKitBridge,
         classLoader: ClassLoader,
-        modelClass: Class<*>
+        modelClass: Class<*>?
     ): Class<*>? {
+        // "TrendTag(tag=" is the data class's toString() prefix and survives
+        // R8 renaming, so use it as the primary marker.
+        val byString = runCatching {
+            bridge.findClass {
+                matcher { addUsingString("TrendTag(tag=") }
+            }
+        }.getOrDefault(emptyList())
+        for (classData in byString) {
+            val cls = runCatching {
+                classData.getInstance(classLoader)
+            }.getOrNull() ?: continue
+            if (cls.declaredConstructors.any { isTrendTagConstructor(it, modelClass) }) {
+                return cls
+            }
+        }
+
+        if (modelClass == null) return null
+
         val results = bridge.findClass {
             matcher {
                 addFieldForType(modelClass.name)
@@ -751,24 +765,14 @@ class ModuleMain : XposedModule() {
             }
         }
         for (classData in results) {
-            val fields = classData.fields
-            if (fields.size != 3) continue
-            if (fields[0].typeName != "java.lang.String") continue
-            if (fields[1].typeName != modelClass.name) continue
-            if (fields[2].typeName != "java.lang.String") continue
             val cls = runCatching {
                 classData.getInstance(classLoader)
             }.getOrNull() ?: continue
-            if (cls.declaredConstructors.any {
-                    it.parameterTypes.size == 3 &&
-                        it.parameterTypes[0] == String::class.java &&
-                        it.parameterTypes[1] == modelClass &&
-                        it.parameterTypes[2] == String::class.java
-                }
-            ) {
+            if (cls.declaredConstructors.any { isTrendTagConstructor(it, modelClass) }) {
                 return cls
             }
         }
+
         val ctors = bridge.findMethod {
             matcher {
                 name = "<init>"
@@ -788,56 +792,79 @@ class ModuleMain : XposedModule() {
         return null
     }
 
+    private fun isTrendTagConstructor(
+        ctor: java.lang.reflect.Constructor<*>,
+        modelClass: Class<*>?
+    ): Boolean {
+        val types = ctor.parameterTypes
+        if (types.size != 3) return false
+        if (types[0] != String::class.java) return false
+        if (types[2] != String::class.java) return false
+        if (types[1] == String::class.java) return false
+        return modelClass == null || types[1] == modelClass
+    }
+
     private fun findTrendTagCallbacks(
         bridge: DexKitBridge,
         classLoader: ClassLoader
     ): List<Method> {
         val contentTypeName = "jp.pxv.android.domain.commonentity.ContentType"
-        val targetClassName = runCatching {
-            bridge.findClass {
-                matcher { addUsingString("exact_match_for_tags") }
-            }.firstOrNull()?.name
-        }.getOrNull()
-        if (targetClassName == null) {
-            Log.w(TAG, "TrendTag: search target class not found, broad search")
-        } else {
-            Log.i(TAG, "TrendTag: search target class=$targetClassName")
-        }
-        val results = bridge.findMethod {
-            matcher {
-                paramCount = 1
-                returnType = "java.lang.Object"
-                addUsingField { type = contentTypeName }
-                if (targetClassName != null) {
-                    addUsingField { type = targetClassName }
-                }
+
+        // Two independent markers from the click handler:
+        //   tf.SEARCH_ILLUST_AT_TREND_TAG  (enum string "SearchIllustAtTrendTag")
+        //   ix8.EXACT_MATCH_FOR_TAGS      (enum string "exact_match_for_tags")
+        // Both are resolved from their strings because the classes are obfuscated.
+        val typeNames = LinkedHashSet<String>()
+        for (marker in arrayOf("SearchIllustAtTrendTag", "exact_match_for_tags")) {
+            val typeName = runCatching {
+                bridge.findClass {
+                    matcher { addUsingString(marker) }
+                }.firstOrNull()?.name
+            }.getOrNull()
+            if (typeName != null) {
+                typeNames += typeName
+            } else {
+                Log.w(TAG, "TrendTag: marker class not found: $marker")
             }
         }
-        val out = ArrayList<Method>()
-        for (result in results) {
-            val cls = runCatching {
-                result.getClassInstance(classLoader)
-            }.getOrNull() ?: continue
-            if (cls.isInterface) continue
-            if (cls.declaredFields.none { it.type == java.lang.Byte.TYPE }) continue
-            val types = result.paramTypeNames
-            if (types.size != 1 || types[0] != "java.lang.Object") continue
-            runCatching {
-                result.getMethodInstance(classLoader)
-            }.getOrNull()?.let { out += it }
+        Log.i(TAG, "TrendTag: callback marker types=$typeNames")
+
+        val out = LinkedHashSet<Method>()
+        for (typeName in typeNames) {
+            val results = bridge.findMethod {
+                matcher {
+                    paramCount = 1
+                    returnType = "java.lang.Object"
+                    addUsingField { type = contentTypeName }
+                    addUsingField { type = typeName }
+                }
+            }
+            for (result in results) {
+                val cls = runCatching {
+                    result.getClassInstance(classLoader)
+                }.getOrNull() ?: continue
+                if (cls.isInterface) continue
+                if (cls.declaredFields.none { it.type == java.lang.Byte.TYPE }) continue
+                val types = result.paramTypeNames
+                if (types.size != 1 || types[0] != "java.lang.Object") continue
+                runCatching {
+                    result.getMethodInstance(classLoader)
+                }.getOrNull()?.let { out += it }
+            }
         }
-        return out
+        return out.toList()
     }
 
     private fun installTrendTagTouch(classLoader: ClassLoader) {
+        // AbstractComposeView is the common superclass of ComposeView and the
+        // host's custom compose hosts, so hooking it covers every compose page.
+        var hooked = 0
         try {
-            val composeViewClass = classLoader.loadClass(
-                "androidx.compose.ui.platform.ComposeView"
+            val hostClass = classLoader.loadClass(
+                "androidx.compose.ui.platform.AbstractComposeView"
             )
-            var hooked = 0
-            for (ctor in composeViewClass.declaredConstructors) {
-                if (ctor.parameterTypes.isEmpty()) continue
-                if (ctor.parameterTypes[0] != Context::class.java) continue
+            for (ctor in hostClass.declaredConstructors) {
+                if (ctor.parameterTypes.firstOrNull() != Context::class.java) continue
                 hook(ctor).intercept { chain ->
                     val result = chain.proceed()
                     val view = chain.thisObject as? View
@@ -848,20 +875,55 @@ class ModuleMain : XposedModule() {
                 }
                 hooked++
             }
-            if (hooked == 0) {
-                Log.e(TAG, "TrendTag: ComposeView constructor not found")
-            } else {
-                Log.i(TAG, "TrendTag: ComposeView touch hook installed")
+            val attached = hostClass.getDeclaredMethod("onAttachedToWindow")
+            hook(attached).intercept { chain ->
+                val result = chain.proceed()
+                val view = chain.thisObject as? View
+                if (view != null) {
+                    view.post { attachTrendTagTouch(view) }
+                }
+                result
             }
+            hooked++
         } catch (e: Throwable) {
-            Log.e(TAG, "TrendTag: touch hook failed", e)
+            Log.w(TAG, "TrendTag: AbstractComposeView hook failed: ${e.message}")
+        }
+
+        if (hooked == 0) {
+            try {
+                val composeViewClass = classLoader.loadClass(
+                    "androidx.compose.ui.platform.ComposeView"
+                )
+                for (ctor in composeViewClass.declaredConstructors) {
+                    if (ctor.parameterTypes.firstOrNull() != Context::class.java) continue
+                    hook(ctor).intercept { chain ->
+                        val result = chain.proceed()
+                        val view = chain.thisObject as? View
+                        if (view != null) {
+                            view.post { attachTrendTagTouch(view) }
+                        }
+                        result
+                    }
+                    hooked++
+                }
+                Log.i(TAG, "TrendTag: ComposeView touch hook installed")
+            } catch (e: Throwable) {
+                Log.e(TAG, "TrendTag: touch hook failed", e)
+            }
+        }
+        if (hooked == 0) {
+            Log.e(TAG, "TrendTag: compose host hook not installed")
+        } else {
+            Log.i(TAG, "TrendTag: compose host hooks installed ($hooked)")
         }
     }
 
     private fun attachTrendTagTouch(root: View, attempt: Int = 0) {
         val target = findComposeTouchTarget(root)
         if (target == null) {
-            if (attempt < 10) {
+            // The host may add its AndroidComposeView child only after the
+            // first layout pass, so keep polling briefly.
+            if (attempt < 40) {
                 root.postDelayed({ attachTrendTagTouch(root, attempt + 1) }, 50L)
             }
             return
@@ -899,14 +961,17 @@ class ModuleMain : XposedModule() {
     }
 
     private fun findComposeTouchTarget(root: View): View? {
-        if (root is ViewGroup) {
-            for (i in 0 until root.childCount) {
-                val child = root.getChildAt(i)
-                if (child is ViewGroup) return child
+        if (root !is ViewGroup) return null
+        var fallback: View? = null
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i)
+            if (child is ViewGroup) {
+                if (child.javaClass.name.contains("AndroidComposeView")) return child
+                if (fallback == null) fallback = child
                 findComposeTouchTarget(child)?.let { return it }
             }
         }
-        return null
+        return fallback
     }
 
     private fun activityFromCallback(callback: Any): Activity? {
@@ -921,6 +986,11 @@ class ModuleMain : XposedModule() {
                 runCatching {
                     value.javaClass.getMethod("getActivity").invoke(value) as? Activity
                 }.getOrNull()?.let { return it }
+                for (contextMethod in arrayOf("requireContext", "getContext")) {
+                    runCatching {
+                        value.javaClass.getMethod(contextMethod).invoke(value) as? Context
+                    }.getOrNull()?.findActivity()?.let { return it }
+                }
                 if (value is Context) {
                     value.findActivity()?.let { return it }
                 }
@@ -1784,7 +1854,7 @@ class ModuleMain : XposedModule() {
         }
         // Strategy 2: fallback to known class name
         return try {
-            val cls = cl.loadClass("te")
+            val cls = cl.loadClass("ne")
             if (cls.declaredFields.any { it.type == peClass }) cls else null
         } catch (_: Exception) { null }
     }
@@ -1817,11 +1887,11 @@ class ModuleMain : XposedModule() {
     }
 
     private fun extractWorkFromListener(listener: DialogInterface.OnClickListener): Any? {
-        // 6.204.0 listener z: a(byte) b(Object/w89) c(Object/v89) d(Serializable/ng7)
+        // Listener lambda: a(byte) b(Object) c(Object) d(Serializable work)
         // The work item is the only Serializable-typed field.
         for (f in listener.javaClass.declaredFields) {
             // Skip String payloads used by unrelated dialogs; the work model is a
-            // Serializable entity (ng7 in 6.204.0).
+            // Serializable entity (the work model).
             if (Serializable::class.java.isAssignableFrom(f.type) && f.type != String::class.java) {
                 f.isAccessible = true
                 return f.get(listener)
@@ -1868,7 +1938,7 @@ class ModuleMain : XposedModule() {
         } catch (e: Exception) { Log.e(TAG, "showDetail: ${e.message}", e) }
     }
 
-    /** Work models expose the user as getUser() (older) or f0() (6.204.0). */
+    /** Work models expose the user as getUser() (older) or f0(). */
     private fun findUser(work: Any): Any? {
         for (name in arrayOf("getUser", "f0")) {
             try {
@@ -1879,7 +1949,7 @@ class ModuleMain : XposedModule() {
         return null
     }
 
-    /** 6.204.0: PixivUser(id=a, name=b, account=c, comment=d). */
+    /** PixivUser(id=a, name=b, account=c, comment=d). */
     private fun findUserName(user: Any): String {
         for (name in arrayOf("name", "userName")) {
             try {
@@ -1899,7 +1969,7 @@ class ModuleMain : XposedModule() {
         return firstString(user) ?: "—"
     }
 
-    /** 6.204.0: PixivUser.a is the numeric user id. */
+    /** PixivUser.a is the numeric user id. */
     private fun findUserId(user: Any): String {
         for (name in arrayOf("id", "userId")) {
             try {
@@ -2046,7 +2116,20 @@ class ModuleMain : XposedModule() {
                 try {
                     parent.javaClass.getMethod("closeDrawers").invoke(parent)
                 } catch (e: Throwable) {
-                    Log.e(TAG, "close drawer failed: ${e.message}", e)
+                    // R8 renames DrawerLayout.closeDrawers() in 6.205.0; the
+                    // internal closeDrawers(boolean) is still available as d(Z).
+                    try {
+                        parent.javaClass
+                            .getMethod("d", java.lang.Boolean.TYPE)
+                            .invoke(parent, false)
+                        Log.i(TAG, "close drawer via d(false)")
+                    } catch (e2: Throwable) {
+                        Log.e(
+                            TAG,
+                            "close drawer failed: ${e.message} / ${e2.message}",
+                            e2
+                        )
+                    }
                 }
                 return
             }
@@ -2137,7 +2220,7 @@ class ModuleMain : XposedModule() {
             }
         }
         // Strategy 3: direct lookup
-        if (m == null) m = findMethodDirect(cl, "um9", "w", 0)
+        if (m == null) m = findMethodDirect(cl, "e9b", "q", 0)
 
         if (m != null) {
             hook(m).intercept { chain ->
@@ -2160,7 +2243,7 @@ class ModuleMain : XposedModule() {
             "android_ab_test_search_result_trial", "boolean", 0)
         if (m == null) m = findMethodByStr(bridge, cl,
             "] cannot be converted to a boolean.", "boolean", 0, StringMatchType.EndsWith)
-        if (m == null) m = findMethodDirect(cl, "i23", "a", 0)
+        if (m == null) m = findMethodDirect(cl, "m83", "a", 0)
 
         if (m != null) { hook(m).intercept { true }; deoptimize(m); Log.i(TAG, "AB test: ${m.declaringClass.name}.${m.name}") }
         else Log.e(TAG, "AB test FAILED")
@@ -2168,7 +2251,7 @@ class ModuleMain : XposedModule() {
 
     private fun installWorkDetailFallback(classLoader: ClassLoader) {
         try {
-            val peClass = classLoader.loadClass("pe")
+            val peClass = classLoader.loadClass("je")
             var itemsField: Field? = null
             var listenerField: Field? = null
             for (f in peClass.declaredFields) {
@@ -2182,7 +2265,7 @@ class ModuleMain : XposedModule() {
             if (itemsField == null || listenerField == null) {
                 Log.e(TAG, "WD(fb): pe fields not found"); return
             }
-            val teClass = classLoader.loadClass("te")
+            val teClass = classLoader.loadClass("ne")
             val peField = teClass.declaredFields.find { it.type == peClass }
             if (peField == null) { Log.e(TAG, "WD(fb): pe field not in te"); return }
             peField.isAccessible = true
@@ -2224,7 +2307,7 @@ class ModuleMain : XposedModule() {
     }
 
     private fun installTrialFallback(cl: ClassLoader) {
-        findMethodDirect(cl, "um9", "w", 0)?.let {
+        findMethodDirect(cl, "e9b", "q", 0)?.let {
             hook(it).intercept { chain ->
                 val premium = isPremiumAccount()
                 if (!trialPremiumLogged) {
@@ -2234,13 +2317,13 @@ class ModuleMain : XposedModule() {
                 if (premium) chain.proceed() else 0L
             }
             deoptimize(it)
-            Log.i(TAG, "Trial(fb): um9.w()")
+            Log.i(TAG, "Trial(fb): e9b.q()")
         } ?: Log.e(TAG, "Trial FB FAILED")
     }
 
     private fun installAbTestFallback(cl: ClassLoader) {
-        findMethodDirect(cl, "i23", "a", 0)?.let {
-            hook(it).intercept { true }; deoptimize(it); Log.i(TAG, "AB test(fb): i23.a()")
+        findMethodDirect(cl, "m83", "a", 0)?.let {
+            hook(it).intercept { true }; deoptimize(it); Log.i(TAG, "AB test(fb): m83.a()")
         } ?: Log.e(TAG, "AB test FB FAILED")
     }
 

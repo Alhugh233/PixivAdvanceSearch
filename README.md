@@ -19,6 +19,8 @@
   - 可调：模糊半径
   - 始终开启：PID 搜索、模块设置入口、作品详情弹窗、试用/AB 绕过
 
+- **趋势标签长按** — 在搜索页长按趋势标签，弹出操作菜单：搜索该标签、跳转到示例作品、查看作品信息。普通点击仍保持原搜索行为。
+
 - **作品详情查看** — 长按作品 → 菜单新增「查看详情」。弹窗显示作品名称、作者名称、作品 PID、用户 PID，支持长按复制。
 
 - **显示设置** — 侧边栏保留「显示设置」选项，点击打开网页版浏览与显示设置。
@@ -35,17 +37,18 @@
 
 | 功能 | Hook 目标 | 搜索方式 |
 |---|---|---|
-| 试用天数 | `um9.w()` | DexKit: `core_local_preference_key_first_launch_time_millis` + `86400000L` |
-| AB 实验 | `i23.a()` | DexKit: 字符串 `"] cannot be converted to a boolean."` |
+| 试用天数 | `e9b.q()` | DexKit: `86400000L` 数字搜索（本地偏好键名不是 DEX 字符串） |
+| AB 实验 | `m83.a()` | DexKit: 字符串 `"] cannot be converted to a boolean."` |
 | PID 查询 | 主搜索页 `SegmentedLayout` 顶栏 | 直接类名 + DexKit fallback；Hook `setOnSelectSegmentListener`，追加第 4 个分段并注入 PID 页面 |
 | 全类型 PID 搜索 | `app-api.pixiv.net` App API | 使用宿主 `AccountManager` 的 `net.pixiv` token 查询 illust/novel/user/series |
-| 封面标签 / 封面模糊 | `ThumbnailView.d(ub7, boolean, Integer)`、排行榜 `w64.a()` | DexKit 定位 bind 方法与作品模型；字段读取失败时用 `toString` 兜底 |
+| 封面标签 / 封面模糊 | `ThumbnailView.d(ce7, boolean, Integer)`、排行榜 `d74.a()` | DexKit 定位 bind 方法与作品模型；字段读取失败时用 `toString` 兜底 |
 | 详情预览模糊 | `DetailImageViewHolder.bind`、`DetailUgoiraViewHolder.bind` | 直接类名；读取作品模型 `xRestrict` 后对预览 View 应用模糊 |
+| 趋势标签长按 | 搜索页趋势标签点击回调 | DexKit 用 `"TrendTag(tag="` / `"SearchIllustAtTrendTag"` 定位数据类与回调；Hook `AbstractComposeView` 判断长按 |
 | 模块设置 | `MainActivity` 侧边栏 | 查找 `NavigationView`，添加菜单项并打开 Compose 全屏 Dialog |
 | 显示设置 | `MainActivity` 侧边栏 | 查找 `NavigationView`，添加菜单项并打开网页设置 |
 | 查看详情 | 对话框 builder 的 `create()` | DexKit: `"layout_inflater"` → builder 参数类 → `addInvoke` → builder → `create()` |
 
-可定位的类优先使用直接类名；混淆类优先使用 DexKit 字节码搜索，失败后回退到 6.204.0 的直接类名/字段。
+可定位的类优先使用直接类名；混淆类优先使用 DexKit 字节码搜索，失败后回退到 6.205.0 的直接类名/字段。
 
 ### 构建
 
@@ -70,7 +73,7 @@ CI 使用 `assembleRelease` 构建，并直接上传未压缩的 APK。
 
 ### 支持版本
 
-- Pixiv: 基于 **6.204.0** 开发与测试；混淆类/字段变化时依赖 DexKit 定位
+- Pixiv: 基于 **6.205.0** 开发与测试；混淆类/字段变化时依赖 DexKit 定位
 - Android: **9.0+**（API 28+）；真正的 GPU 模糊需要 Android 12+（API 31+）
 - LSPosed API: **102**
 
